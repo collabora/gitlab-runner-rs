@@ -1,0 +1,273 @@
+use serde::Deserialize;
+use serde::Serialize;
+use std::sync::Arc;
+use std::sync::Mutex;
+use thiserror::Error;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MockJobState {
+    Pending,
+    Running,
+    Success,
+    Failed,
+}
+
+impl MockJobState {
+    pub fn finished(self) -> bool {
+        self == Self::Success || self == Self::Failed
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum LogError {
+    #[error("Incorrect range start")]
+    IncorrectStart,
+    #[error("Incorrect range end")]
+    IncorrectEnd,
+}
+
+#[derive(Debug)]
+pub(crate) struct MockJobInner {
+    state: MockJobState,
+    artifact: Arc<Vec<u8>>,
+    log: Vec<u8>,
+}
+
+#[derive(Copy, Clone, Serialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MockJobStepWhen {
+    Always,
+    OnFailure,
+    OnSuccess,
+}
+
+#[derive(Copy, Clone, Serialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MockJobStepName {
+    Script,
+    AfterScript,
+}
+
+#[derive(Clone, Serialize, Debug)]
+pub struct MockJobStep {
+    name: MockJobStepName,
+    script: Vec<String>,
+    timeout: u64,
+    when: MockJobStepWhen,
+    allow_failure: bool,
+}
+
+#[derive(Copy, Clone, Serialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MockJobArtifactWhen {
+    Always,
+    OnFailure,
+    OnSuccess,
+}
+
+#[derive(Clone, Serialize, Debug)]
+pub struct MockJobArtifact {
+    pub name: Option<String>,
+    pub untracked: bool,
+    pub paths: Vec<String>,
+    pub when: Option<MockJobArtifactWhen>,
+    pub artifact_type: String,
+    pub artifact_format: Option<String>,
+    pub expire_in: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MockJob {
+    name: String,
+    id: u64,
+    token: String,
+    steps: Vec<MockJobStep>,
+    dependencies: Vec<MockJob>,
+    artifacts: Vec<MockJobArtifact>,
+    inner: Arc<Mutex<MockJobInner>>,
+}
+
+impl MockJob {
+    pub(crate) fn new(name: String, id: u64) -> Self {
+        let mut builder = MockJobBuilder::new(name, id);
+        builder.add_step(
+            MockJobStepName::Script,
+            vec!["dummy".to_string()],
+            3600,
+            MockJobStepWhen::OnSuccess,
+            false,
+        );
+
+        builder.build()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub fn dependencies(&self) -> &[MockJob] {
+        &self.dependencies
+    }
+
+    pub fn artifacts(&self) -> &[MockJobArtifact] {
+        &self.artifacts
+    }
+
+    pub fn steps(&self) -> &[MockJobStep] {
+        &self.steps
+    }
+
+    pub fn state(&self) -> MockJobState {
+        let inner = self.inner.lock().unwrap();
+        inner.state
+    }
+
+    pub fn finished(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.state.finished()
+    }
+
+    pub fn log(&self) -> Vec<u8> {
+        let inner = self.inner.lock().unwrap();
+        inner.log.clone()
+    }
+
+    pub fn artifact(&self) -> Arc<Vec<u8>> {
+        let inner = self.inner.lock().unwrap();
+        inner.artifact.clone()
+    }
+
+    pub(crate) fn update_state(&self, state: MockJobState) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.state = state;
+    }
+
+    pub(crate) fn append_log(&self, data: &[u8], start: usize, end: usize) -> Result<(), LogError> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.log.len() != start {
+            return Err(LogError::IncorrectStart);
+        }
+
+        if start + data.len() - 1 != end {
+            return Err(LogError::IncorrectEnd);
+        }
+
+        inner.log.extend(data);
+        Ok(())
+    }
+
+    pub(crate) fn set_artifact(&self, data: Vec<u8>) {
+        let mut inner = self.inner.lock().unwrap();
+        assert!(inner.artifact.is_empty());
+        inner.artifact = Arc::new(data);
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MockJobBuilder {
+    name: String,
+    id: u64,
+    steps: Vec<MockJobStep>,
+    dependencies: Vec<MockJob>,
+    artifacts: Vec<MockJobArtifact>,
+}
+
+impl MockJobBuilder {
+    pub(crate) fn new(name: String, id: u64) -> Self {
+        Self {
+            name,
+            id,
+            ..Default::default()
+        }
+    }
+
+    pub fn add_step(
+        &mut self,
+        name: MockJobStepName,
+        script: Vec<String>,
+        timeout: u64,
+        when: MockJobStepWhen,
+        allow_failure: bool,
+    ) {
+        if self.steps.iter().any(|s| s.name == name) {
+            panic!("Step already exists!");
+        }
+
+        let step = MockJobStep {
+            name,
+            script,
+            timeout,
+            when,
+            allow_failure,
+        };
+
+        self.steps.push(step);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_artifact(
+        &mut self,
+        name: Option<String>,
+        untracked: bool,
+        paths: Vec<String>,
+        when: Option<MockJobArtifactWhen>,
+        artifact_type: String,
+        artifact_format: Option<String>,
+        expire_in: Option<String>,
+    ) {
+        self.artifacts.push(MockJobArtifact {
+            name,
+            untracked,
+            paths,
+            when,
+            artifact_type,
+            artifact_format,
+            expire_in,
+        });
+    }
+
+    pub fn add_artifact_paths(&mut self, paths: Vec<String>) {
+        self.add_artifact(
+            None,
+            false,
+            paths,
+            None,
+            "archive".to_string(),
+            Some("zip".to_string()),
+            None,
+        );
+    }
+
+    pub fn dependency(&mut self, dependency: MockJob) {
+        self.dependencies.push(dependency);
+    }
+
+    pub fn build(self) -> MockJob {
+        assert!(!self.steps.is_empty(), "Should have at least one step");
+        let inner = MockJobInner {
+            state: MockJobState::Pending,
+            log: Vec::new(),
+            artifact: Arc::default(),
+        };
+
+        let inner = Arc::new(Mutex::new(inner));
+        MockJob {
+            name: self.name,
+            id: self.id,
+            token: format!("job-token-{}", self.id),
+            steps: self.steps,
+            dependencies: self.dependencies,
+            artifacts: self.artifacts,
+            inner,
+        }
+    }
+}
