@@ -27,6 +27,6 @@ log = "0.4.14"
 
 [dev-dependencies]
 tokio = { version = "1.5.0", features = [ "full", "test-util" ] }
-gitlab-runner-mock = { path = "../gitlab-runner-mock" }
+gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.0.1" }
 structopt = "0.3.21"
 futures = "0.3.15"
