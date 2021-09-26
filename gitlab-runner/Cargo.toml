@@ -5,6 +5,8 @@ authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 description = "Helper crate to build custom gitlab runners"
+homepage = "https://github.com/sjoerdsimons/gitlab-runner-rs"
+repository = "https://github.com/sjoerdsimons/gitlab-runner-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
