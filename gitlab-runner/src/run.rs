@@ -19,7 +19,7 @@ async fn run<F, J, Ret>(
     process: F,
 ) -> JobResult
 where
-    F: Fn(Job) -> Ret,
+    F: FnOnce(Job) -> Ret,
     J: JobHandler,
     Ret: Future<Output = Result<J, ()>>,
 {
@@ -104,7 +104,7 @@ impl RunHandler {
 
     async fn run<F, J, Ret>(&mut self, process: F)
     where
-        F: Fn(Job) -> Ret + Send + Sync + 'static,
+        F: FnOnce(Job) -> Ret + Send + Sync + 'static,
         J: JobHandler + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
@@ -149,7 +149,7 @@ pub(crate) struct Run {
 impl Run {
     pub fn new<F, J, Ret>(process: F, client: Client, response: JobResponse) -> Self
     where
-        F: Fn(Job) -> Ret + Sync + Send + 'static,
+        F: FnOnce(Job) -> Ret + Sync + Send + 'static,
         J: JobHandler + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {

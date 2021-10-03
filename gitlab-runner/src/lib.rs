@@ -53,7 +53,7 @@ impl Runner {
     /// Request a new job from gitlab
     pub async fn request_job<F, J, Ret>(&mut self, process: F) -> Result<bool, client::Error>
     where
-        F: Fn(Job) -> Ret + Sync + Send + 'static,
+        F: FnOnce(Job) -> Ret + Sync + Send + 'static,
         J: JobHandler + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
