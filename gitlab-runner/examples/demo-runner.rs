@@ -64,7 +64,7 @@ impl Run {
     }
 
     async fn command(&mut self, command: &str) -> JobResult {
-        self.job.trace(format!("> {}\n", command)).await;
+        self.job.trace(format!("> {}\n", command));
         let mut p = command.split_whitespace();
         if let Some(cmd) = p.next() {
             debug!("command: >{}<", cmd);
@@ -74,9 +74,7 @@ impl Run {
                         Some(amount) => match amount.parse() {
                             Ok(a) => a,
                             Err(e) => {
-                                self.job
-                                    .trace(format!("Failed to parse amount: {}\n", e))
-                                    .await;
+                                self.job.trace(format!("Failed to parse amount: {}\n", e));
                                 return Err(());
                             }
                         },
@@ -87,22 +85,19 @@ impl Run {
                         Ok(f) => f,
                         Err(e) => {
                             self.job
-                                .trace(format!("Failed to get facts :( - {:?}\n", e))
-                                .await;
+                                .trace(format!("Failed to get facts :( - {:?}\n", e));
                             Vec::new()
                         }
                     };
                     for f in facts {
-                        self.job.trace(format!("Did you know: {}\n", f)).await;
+                        self.job.trace(format!("Did you know: {}\n", f));
                         self.facts.push(f);
                     }
                     Ok(())
                 }
                 "artifacts" => {
                     for d in self.job.dependencies() {
-                        self.job
-                            .trace(format!("Artifacts from : {}\n", d.name()))
-                            .await;
+                        self.job.trace(format!("Artifacts from : {}\n", d.name()));
                         if let Some(mut artifact) = d.download().await.unwrap() {
                             for i in 0..artifact.len() {
                                 let (name, data) = {
@@ -112,20 +107,20 @@ impl Run {
                                         .expect("Failed to read artifact file");
                                     (f.name().to_string(), s)
                                 };
-                                self.job.trace(format!("=== File: {} ===\n", name)).await;
-                                self.job.trace(data).await;
+                                self.job.trace(format!("=== File: {} ===\n", name));
+                                self.job.trace(data);
                             }
                         }
                     }
                     Ok(())
                 }
                 _ => {
-                    self.job.trace("Unknown command\n").await;
+                    self.job.trace("Unknown command\n");
                     Err(())
                 }
             }
         } else {
-            self.job.trace("empty command").await;
+            self.job.trace("empty command");
             Err(())
         }
     }

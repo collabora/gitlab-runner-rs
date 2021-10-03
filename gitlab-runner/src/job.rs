@@ -1,8 +1,7 @@
 use crate::artifact::Artifact;
 use crate::client::{Client, JobDependency, JobResponse, JobVariable};
-use bytes::Bytes;
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use bytes::{Bytes, BytesMut};
+use std::sync::{Arc, Mutex};
 
 pub struct Variable<'a> {
     v: &'a JobVariable,
@@ -75,46 +74,66 @@ impl<'a> Dependency<'a> {
     }
 }
 
-#[derive(Debug)]
-pub(crate) enum JobRequest {
-    Trace(Bytes),
+#[derive(Clone, Debug)]
+pub(crate) struct JobData {
+    trace: Arc<Mutex<BytesMut>>,
+}
+
+impl JobData {
+    fn new() -> Self {
+        let trace = Arc::new(Mutex::new(BytesMut::new()));
+        Self { trace }
+    }
+
+    pub(crate) fn trace(&self, data: &[u8]) {
+        let mut trace = self.trace.lock().unwrap();
+        trace.extend_from_slice(data);
+    }
+
+    pub(crate) fn split_trace(&self) -> Option<Bytes> {
+        let mut trace = self.trace.lock().unwrap();
+        if trace.is_empty() {
+            None
+        } else {
+            Some(trace.split().freeze())
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Job {
-    data: Arc<JobResponse>,
-    channel: mpsc::Sender<JobRequest>,
+    response: Arc<JobResponse>,
     client: Client,
+    data: JobData,
 }
 
 impl Job {
-    pub(crate) fn new(
-        client: Client,
-        data: Arc<JobResponse>,
-        channel: mpsc::Sender<JobRequest>,
-    ) -> Self {
-        Self {
-            client,
+    pub(crate) fn new(client: Client, response: Arc<JobResponse>) -> (Self, JobData) {
+        let data = JobData::new();
+        (
+            Self {
+                client,
+                response,
+                data: data.clone(),
+            },
             data,
-            channel,
-        }
+        )
     }
 
     pub fn id(&self) -> u64 {
-        self.data.id
+        self.response.id
     }
 
-    pub async fn trace<D: Into<Bytes>>(&self, data: D) {
-        let r = JobRequest::Trace(data.into());
-        self.channel.send(r).await.unwrap();
+    pub fn trace<D: AsRef<[u8]>>(&self, data: D) {
+        self.data.trace(data.as_ref());
     }
 
     pub fn variable(&self, key: &str) -> Option<Variable> {
-        self.data.variables.get(key).map(|v| Variable { v })
+        self.response.variables.get(key).map(|v| Variable { v })
     }
 
     pub fn dependencies(&self) -> impl Iterator<Item = Dependency> {
-        self.data
+        self.response
             .dependencies
             .iter()
             .map(move |dependency| Dependency {

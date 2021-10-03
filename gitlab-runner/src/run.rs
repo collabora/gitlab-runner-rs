@@ -1,14 +1,13 @@
-use bytes::Bytes;
 use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::{interval_at, Duration, Instant, Interval};
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
-use crate::job::{Job, JobRequest};
+use crate::job::{Job, JobData};
 use crate::uploader::Uploader;
 use crate::{JobHandler, JobResult, Phase};
 
@@ -66,6 +65,7 @@ struct RunHandler {
     client: Client,
     response: Arc<JobResponse>,
     log_offset: usize,
+    interval: Interval,
 }
 
 impl RunHandler {
@@ -75,24 +75,33 @@ impl RunHandler {
             client,
             response,
             log_offset: 0,
+            interval: interval_at(
+                Instant::now() + Duration::from_secs(3),
+                Duration::from_secs(3),
+            ),
         }
     }
 
     async fn update(&self, state: JobState) -> Result<(), crate::client::Error> {
         self.client
             .update_job(self.response.id, &self.response.token, state)
-            .await
+            .await?;
+        Ok(())
     }
 
-    // TODO rename this to trace
-    async fn log(&mut self, data: Bytes) -> Result<(), crate::client::Error> {
-        let len = data.len();
+    async fn send_trace(&mut self, jobdata: &JobData) -> Result<(), crate::client::Error> {
+        let buf = if let Some(buf) = jobdata.split_trace() {
+            buf
+        } else {
+            return Ok(());
+        };
+        let len = buf.len();
 
         self.client
             .trace(
                 self.response.id,
                 &self.response.token,
-                data,
+                buf,
                 self.log_offset,
                 len,
             )
@@ -108,9 +117,7 @@ impl RunHandler {
         J: JobHandler + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
-        let (tx, mut rx) = mpsc::channel(16);
-
-        let job = Job::new(self.client.clone(), self.response.clone(), tx);
+        let (job, jobdata) = Job::new(self.client.clone(), self.response.clone());
         let join = tokio::spawn(run(
             job,
             self.client.clone(),
@@ -119,18 +126,19 @@ impl RunHandler {
         ));
         tokio::pin!(join);
 
-        loop {
+        let result = loop {
             // TODO send keepalives to the server and monitor for cancellatiion
             tokio::select! {
-                r = rx.recv()  => {
-                    match r {
-                        Some(JobRequest::Trace(b)) => self.log(b).await.unwrap(),
-                        None => break,
-                    }
+                _ = self.interval.tick() => {
+                    let _ = self.send_trace(&jobdata).await;
                 },
+                r = &mut join => {
+                    break r
+                }
             }
-        }
-        let state = match join.await {
+        };
+        self.send_trace(&jobdata).await.ok();
+        let state = match result {
             Ok(Ok(_)) => JobState::Success,
             Ok(Err(_)) => JobState::Failed,
             Err(_) => JobState::Failed,

@@ -255,9 +255,9 @@ async fn job_log() {
 
     let got_job = runner
         .request_job(|job| async move {
-            job.trace("aa").await;
-            job.trace("bb").await;
-            job.trace("cc").await;
+            job.trace("aa");
+            job.trace("bb");
+            job.trace("cc");
             SimpleRun::dummy(Ok(())).await
         })
         .await
