@@ -46,7 +46,10 @@ impl Respond for JobUpdateResponder {
                         job.update_state(r.state);
                         ResponseTemplate::new(200)
                     }
-                    (MockJobState::Running, MockJobState::Running) => ResponseTemplate::new(200),
+                    (MockJobState::Running, MockJobState::Running) => {
+                        job.update_state(r.state);
+                        ResponseTemplate::new(200)
+                    }
                     _ => panic!("Invalid state change"),
                 }
             }

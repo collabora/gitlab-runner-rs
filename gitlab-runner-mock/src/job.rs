@@ -30,8 +30,10 @@ pub enum LogError {
 #[derive(Debug)]
 pub(crate) struct MockJobInner {
     state: MockJobState,
+    state_updates: u32,
     artifact: Arc<Vec<u8>>,
     log: Vec<u8>,
+    log_patches: u32,
 }
 
 #[derive(Copy, Clone, Serialize, Debug, Eq, PartialEq)]
@@ -131,6 +133,11 @@ impl MockJob {
         inner.state
     }
 
+    pub fn state_updates(&self) -> u32 {
+        let inner = self.inner.lock().unwrap();
+        inner.state_updates
+    }
+
     pub fn finished(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         inner.state.finished()
@@ -141,6 +148,11 @@ impl MockJob {
         inner.log.clone()
     }
 
+    pub fn log_patches(&self) -> u32 {
+        let inner = self.inner.lock().unwrap();
+        inner.log_patches
+    }
+
     pub fn artifact(&self) -> Arc<Vec<u8>> {
         let inner = self.inner.lock().unwrap();
         inner.artifact.clone()
@@ -148,6 +160,7 @@ impl MockJob {
 
     pub(crate) fn update_state(&self, state: MockJobState) {
         let mut inner = self.inner.lock().unwrap();
+        inner.state_updates += 1;
         inner.state = state;
     }
 
@@ -162,6 +175,7 @@ impl MockJob {
         }
 
         inner.log.extend(data);
+        inner.log_patches += 1;
         Ok(())
     }
 
@@ -255,7 +269,9 @@ impl MockJobBuilder {
         assert!(!self.steps.is_empty(), "Should have at least one step");
         let inner = MockJobInner {
             state: MockJobState::Pending,
+            state_updates: 0,
             log: Vec::new(),
+            log_patches: 0,
             artifact: Arc::default(),
         };
 
