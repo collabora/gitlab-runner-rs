@@ -124,7 +124,6 @@ impl GitlabRunnerMock {
             if job.state() == MockJobState::Pending
                 && job.dependencies().iter().all(|d| d.state().finished())
             {
-                job.update_state(MockJobState::Running);
                 return Some(job.clone());
             }
         }

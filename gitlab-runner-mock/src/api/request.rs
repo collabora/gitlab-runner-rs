@@ -4,7 +4,7 @@ use serde_json::json;
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
 
-use crate::GitlabRunnerMock;
+use crate::{GitlabRunnerMock, MockJobState};
 
 /*
   jobs/id => 200  if ok;
@@ -38,6 +38,7 @@ impl Respond for JobRequestResponder {
         }
 
         if let Some(job) = self.mock.grab_pending_job() {
+            job.update_state(MockJobState::Running);
             let variables = json!([
               { "key": "CI_PIPELINE_ID", "value": "120", "public": true, "masked": false },
               { "key": "CI_PIPELINE_URL", "value": "https://gitlab.example.com/test/gitlab-test/-/pipelines/120", "public": true, "masked": false },
