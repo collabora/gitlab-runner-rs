@@ -24,7 +24,10 @@ struct JobRequest<'a> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum JobState {
+    Pending,
+    Running,
     Success,
     Failed,
 }
