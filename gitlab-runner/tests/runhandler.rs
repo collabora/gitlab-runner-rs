@@ -4,7 +4,7 @@ use std::pin::Pin;
 //
 use gitlab_runner::job::Job;
 use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
-use gitlab_runner_mock::{GitlabRunnerMock, MockJobState};
+use gitlab_runner_mock::{GitlabRunnerMock, MockJob, MockJobState};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
@@ -99,11 +99,44 @@ impl JobHandler for Logger {
     }
 }
 
+async fn log_batch(
+    job: &MockJob,
+    control: &LoggerControl,
+    mut patches: u32,
+    expected: &mut Vec<u8>,
+) -> u32 {
+    control.log("1".to_string()).await;
+    for _ in 0u32..2048 {
+        tokio::task::yield_now().await;
+    }
+    control.log_wait("2".to_string()).await;
+    for _ in 0u32..2048 {
+        tokio::task::yield_now().await;
+    }
+    expected.extend(b"12");
+
+    assert_eq!(job.log_patches(), patches);
+
+    // Jump time by 4 seconds; which should cause a single ticket on the trace update interval
+    tokio::time::advance(Duration::from_secs(4)).await;
+    // Busy wait for the log patches to be receive by the mock server
+    while job.log_patches() == patches {
+        tokio::task::yield_now().await;
+    }
+
+    patches += 1;
+    assert_eq!(job.log_patches(), patches);
+    assert_eq!(job.log(), *expected);
+
+    patches
+}
+
 // Test only set only every 3 seconds
 // Test it gets sent on the rate requested
 // Test Update is called regularily
 #[tokio::test(start_paused = true)]
 async fn update_interval() {
+    let mut expected = Vec::new();
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("loging".to_string());
 
@@ -117,29 +150,9 @@ async fn update_interval() {
         .unwrap();
     assert_eq!(true, got_job);
 
-    control.log("1".to_string()).await;
-    control.log_wait("2".to_string()).await;
-
-    assert_eq!(job.log_patches(), 0);
-
-    // Jump time by 4 seconds; which should cause a single ticket on the trace update interval
-    tokio::time::advance(Duration::from_secs(4)).await;
-    // Busy wait for the log patches to be receive by the mock server
-    while job.log_patches() == 0 {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(job.log_patches(), 1);
-    assert_eq!(job.log(), "12".as_bytes());
-
-    control.log_wait("3".to_string()).await;
-    control.log_wait("4".to_string()).await;
-
-    tokio::time::advance(Duration::from_secs(3)).await;
-    while job.log_patches() == 1 {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(job.log_patches(), 2);
-    assert_eq!(job.log(), "1234".as_bytes());
+    let mut patches = log_batch(&job, &control, 0, &mut expected).await;
+    patches = log_batch(&job, &control, patches, &mut expected).await;
+    patches = log_batch(&job, &control, patches, &mut expected).await;
 
     // First state update was pendng -> running
     assert_eq!(job.state_updates(), 1);
@@ -150,7 +163,10 @@ async fn update_interval() {
         tokio::task::yield_now().await;
     }
     assert_eq!(job.state_updates(), 2);
-    assert_eq!(job.log_patches(), 2);
+    assert_eq!(job.log_patches(), patches);
+
+    // Check one log attempt to make sure the intervals aren't trying to catch up
+    patches = log_batch(&job, &control, patches, &mut expected).await;
 
     /* and back to normal */
     tokio::time::resume();

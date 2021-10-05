@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::task::JoinHandle;
-use tokio::time::{interval_at, Duration, Instant, Interval};
+use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
 use crate::job::Job;
@@ -75,14 +75,17 @@ struct RunHandler {
 impl RunHandler {
     fn new(client: Client, response: JobResponse) -> Self {
         let response = Arc::new(response);
+        let mut interval = interval_at(
+            Instant::now() + Duration::from_secs(3),
+            Duration::from_secs(3),
+        );
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
         Self {
             client,
             response,
             log_offset: 0,
-            interval: interval_at(
-                Instant::now() + Duration::from_secs(3),
-                Duration::from_secs(3),
-            ),
+            interval,
             last_alive: Instant::now(),
         }
     }
