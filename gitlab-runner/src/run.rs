@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
@@ -7,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Duration, Instant, Interval};
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
-use crate::job::{Job, JobData};
+use crate::job::Job;
 use crate::uploader::Uploader;
 use crate::{JobHandler, JobResult, Phase};
 
@@ -61,11 +62,14 @@ where
     r
 }
 
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 struct RunHandler {
     client: Client,
     response: Arc<JobResponse>,
     log_offset: usize,
     interval: Interval,
+    // Last time a communication to gitlab was done so it knows the job is alive
+    last_alive: Instant,
 }
 
 impl RunHandler {
@@ -79,6 +83,7 @@ impl RunHandler {
                 Instant::now() + Duration::from_secs(3),
                 Duration::from_secs(3),
             ),
+            last_alive: Instant::now(),
         }
     }
 
@@ -89,12 +94,8 @@ impl RunHandler {
         Ok(())
     }
 
-    async fn send_trace(&mut self, jobdata: &JobData) -> Result<(), crate::client::Error> {
-        let buf = if let Some(buf) = jobdata.split_trace() {
-            buf
-        } else {
-            return Ok(());
-        };
+    async fn send_trace(&mut self, buf: Bytes) -> Result<(), crate::client::Error> {
+        assert!(!buf.is_empty());
         let len = buf.len();
 
         self.client
@@ -127,17 +128,33 @@ impl RunHandler {
         tokio::pin!(join);
 
         let result = loop {
-            // TODO send keepalives to the server and monitor for cancellatiion
             tokio::select! {
                 _ = self.interval.tick() => {
-                    let _ = self.send_trace(&jobdata).await;
+                    // Measure the current instant before calling into the gitlab API mostly for
+                    // testing purposes as it shifts tokios time but can only sync with server
+                    // interactions
+                    let now = Instant::now();
+                    if let Some(buf) = jobdata.split_trace() {
+                        // TODO be resiliant against send errors
+                        if self.send_trace(buf).await.is_ok() {
+                            self.last_alive = now;
+                        }
+                    } else if now - self.last_alive >  KEEPALIVE_INTERVAL {
+                        // In case of errors another update will be sent at the next tick
+                        if self.update(JobState::Running).await.is_ok() {
+                            self.last_alive = now;
+                        }
+                    }
                 },
-                r = &mut join => {
-                    break r
-                }
+                r = &mut join => break r
             }
         };
-        self.send_trace(&jobdata).await.ok();
+
+        // Send the remaining trace buffer back to gitlab.
+        if let Some(buf) = jobdata.split_trace() {
+            let _ = self.send_trace(buf).await.ok();
+        }
+
         let state = match result {
             Ok(Ok(_)) => JobState::Success,
             Ok(Err(_)) => JobState::Failed,
