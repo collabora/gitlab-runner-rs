@@ -32,7 +32,7 @@ pub(crate) struct MockJobInner {
     state: MockJobState,
     state_updates: u32,
     artifact: Arc<Vec<u8>>,
-    log: Vec<u8>,
+    log: Vec<Vec<u8>>,
     log_patches: u32,
 }
 
@@ -143,9 +143,14 @@ impl MockJob {
         inner.state.finished()
     }
 
+    pub fn log_last(&self) -> Option<Vec<u8>> {
+        let inner = self.inner.lock().unwrap();
+        inner.log.last().cloned()
+    }
+
     pub fn log(&self) -> Vec<u8> {
         let inner = self.inner.lock().unwrap();
-        inner.log.clone()
+        inner.log.concat()
     }
 
     pub fn log_patches(&self) -> u32 {
@@ -164,9 +169,16 @@ impl MockJob {
         inner.state = state;
     }
 
-    pub(crate) fn append_log(&self, data: &[u8], start: usize, end: usize) -> Result<(), LogError> {
+    pub(crate) fn append_log(
+        &self,
+        data: Vec<u8>,
+        start: usize,
+        end: usize,
+    ) -> Result<(), LogError> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.log.len() != start {
+
+        let log_len = inner.log.iter().fold(0, |acc, l| acc + l.len());
+        if log_len != start {
             return Err(LogError::IncorrectStart);
         }
 
@@ -174,7 +186,7 @@ impl MockJob {
             return Err(LogError::IncorrectEnd);
         }
 
-        inner.log.extend(data);
+        inner.log.push(data);
         inner.log_patches += 1;
         Ok(())
     }

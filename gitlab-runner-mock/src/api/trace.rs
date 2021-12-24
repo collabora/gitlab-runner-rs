@@ -44,7 +44,7 @@ impl Respond for JobTraceResponder {
             if token != job.token() {
                 ResponseTemplate::new(403)
             } else {
-                match job.append_log(&request.body, start, end) {
+                match job.append_log(request.body.clone(), start, end) {
                     Ok(()) => ResponseTemplate::new(202).insert_header(
                         "X-GitLab-Trace-Update-Interval",
                         &*self.mock.update_interval().to_string(),
