@@ -27,6 +27,7 @@ struct Inner {
     server: MockServer,
     runner_token: String,
     jobs: Mutex<JobData>,
+    update_interval: Mutex<u32>,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ impl GitlabRunnerMock {
             server: m,
             runner_token: "fakerunnertoken".to_string(),
             jobs: Mutex::new(jobs),
+            update_interval: Mutex::new(3),
         };
         let server = Self {
             inner: Arc::new(inner),
@@ -146,5 +148,13 @@ impl GitlabRunnerMock {
             .iter()
             .filter(|r| r.url.path() == "/api/v4/jobs/request")
             .count()
+    }
+
+    pub fn update_interval(&self) -> u32 {
+        *self.inner.update_interval.lock().unwrap()
+    }
+
+    pub fn set_update_interval(&self, interval: u32) {
+        *self.inner.update_interval.lock().unwrap() = interval;
     }
 }

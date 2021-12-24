@@ -45,7 +45,10 @@ impl Respond for JobTraceResponder {
                 ResponseTemplate::new(403)
             } else {
                 match job.append_log(&request.body, start, end) {
-                    Ok(()) => ResponseTemplate::new(202),
+                    Ok(()) => ResponseTemplate::new(202).insert_header(
+                        "X-GitLab-Trace-Update-Interval",
+                        &*self.mock.update_interval().to_string(),
+                    ),
                     Err(e) => ResponseTemplate::new(416).set_body_string(format!("{:?}", e)),
                 }
             }
