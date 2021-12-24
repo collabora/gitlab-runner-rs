@@ -103,8 +103,10 @@ impl Run {
                                 let (name, data) = {
                                     let mut f = artifact.by_index(i).expect("Failed to open file");
                                     let mut s = String::new();
-                                    f.read_to_string(&mut s)
-                                        .expect("Failed to read artifact file");
+                                    if f.read_to_string(&mut s).is_err() {
+                                        s.clear();
+                                        s.push_str("Failed to read file to text");
+                                    }
                                     (f.name().to_string(), s)
                                 };
                                 self.job.trace(format!("=== File: {} ===\n", name));
