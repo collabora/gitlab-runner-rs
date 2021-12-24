@@ -35,15 +35,11 @@ where
     }
 
     //let upload = match response.
-    let upload = if let Some(a) = response.artifacts.get(0) {
-        match a.when {
-            ArtifactWhen::Always => true,
-            ArtifactWhen::OnSuccess => script_result.is_ok(),
-            ArtifactWhen::OnFailure => script_result.is_err(),
-        }
-    } else {
-        false
-    };
+    let upload = response.artifacts.get(0).map_or(false, |a| match a.when {
+        ArtifactWhen::Always => true,
+        ArtifactWhen::OnSuccess => script_result.is_ok(),
+        ArtifactWhen::OnFailure => script_result.is_err(),
+    });
 
     let r = if upload {
         let mut uploader = Uploader::new(client, response);
