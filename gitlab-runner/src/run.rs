@@ -75,19 +75,20 @@ struct RunHandler {
 impl RunHandler {
     fn new(client: Client, response: JobResponse) -> Self {
         let response = Arc::new(response);
-        let mut interval = interval_at(
-            Instant::now() + Duration::from_secs(3),
-            Duration::from_secs(3),
-        );
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
+        let now = Instant::now();
         Self {
             client,
             response,
             log_offset: 0,
-            interval,
-            last_alive: Instant::now(),
+            interval: Self::create_interval(now, Duration::from_secs(3)),
+            last_alive: now,
         }
+    }
+
+    fn create_interval(instant: Instant, period: Duration) -> Interval {
+        let mut interval = interval_at(instant + period, period);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        interval
     }
 
     async fn update(&self, state: JobState) -> Result<(), crate::client::Error> {
@@ -97,11 +98,12 @@ impl RunHandler {
         Ok(())
     }
 
-    async fn send_trace(&mut self, buf: Bytes) -> Result<(), crate::client::Error> {
+    async fn send_trace(&mut self, buf: Bytes) -> Result<Option<Duration>, crate::client::Error> {
         assert!(!buf.is_empty());
         let len = buf.len();
 
-        self.client
+        let reply = self
+            .client
             .trace(
                 self.response.id,
                 &self.response.token,
@@ -111,8 +113,7 @@ impl RunHandler {
             )
             .await?;
         self.log_offset += len;
-
-        Ok(())
+        Ok(reply.trace_update_interval)
     }
 
     async fn run<F, J, Ret>(&mut self, process: F)
@@ -133,20 +134,21 @@ impl RunHandler {
         let result = loop {
             tokio::select! {
                 _ = self.interval.tick() => {
-                    // Measure the current instant before calling into the gitlab API mostly for
-                    // testing purposes as it shifts tokios time but can only sync with server
-                    // interactions
+                    // Compare against *now* rather then the tick returned instant as that is the
+                    // deadline which might have been missed; especially when testing.
                     let now = Instant::now();
                     if let Some(buf) = jobdata.split_trace() {
                         // TODO be resiliant against send errors
-                        if self.send_trace(buf).await.is_ok() {
-                            self.last_alive = now;
+                        if let Ok(Some(interval)) = self.send_trace(buf).await {
+                            if interval != self.interval.period() {
+                                self.interval = Self::create_interval(now, interval);
+                            }
                         }
+                        self.last_alive = now;
                     } else if now - self.last_alive >  KEEPALIVE_INTERVAL {
                         // In case of errors another update will be sent at the next tick
-                        if self.update(JobState::Running).await.is_ok() {
-                            self.last_alive = now;
-                        }
+                        let _ = self.update(JobState::Running).await;
+                        self.last_alive = now;
                     }
                 },
                 r = &mut join => break r
