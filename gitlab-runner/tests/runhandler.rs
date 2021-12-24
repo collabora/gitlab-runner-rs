@@ -99,34 +99,59 @@ impl JobHandler for Logger {
     }
 }
 
+/// busy wait while the closure returns true
+async fn busy_wait<F>(f: F)
+where
+    F: Fn() -> bool,
+{
+    while f() {
+        // Use std lib (blocking) sleep to avoid the
+        // tests time adjustments.
+        std::thread::sleep(Duration::from_millis(5));
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn busy_delay(d: Duration) {
+    // Measure using std time instant to avoid tokios time adjustment
+    let now = std::time::Instant::now();
+    let deadline = now + d;
+    busy_wait(|| deadline >= std::time::Instant::now()).await
+}
+
+/// Log a various lines and check if it got logged in one batch
+/// This will flush the job buffer!
 async fn log_batch(
     job: &MockJob,
     control: &LoggerControl,
     mut patches: u32,
-    expected: &mut Vec<u8>,
+    interval: Duration,
 ) -> u32 {
-    control.log("1".to_string()).await;
-    for _ in 0u32..2048 {
-        tokio::task::yield_now().await;
-    }
+    // Send two seperate message and yield a bunch of times after each; Even when doing so neither
+    // entry should be sent to the gitlab server just yet; Only when the time is advanced by the
+    // interval it's expected to arrive..
+    //
+    // Do a sleep inside the busy wait loop to give the OS some time to do its processing in case
+    // the client doesn't behave like expected
+    control.log_wait("1".to_string()).await;
+    tokio::time::advance(interval / 4).await;
+    busy_delay(Duration::from_millis(100)).await;
+    assert_eq!(job.log_patches(), patches, "Seen an unexpected log patch");
+
     control.log_wait("2".to_string()).await;
-    for _ in 0u32..2048 {
-        tokio::task::yield_now().await;
-    }
-    expected.extend(b"12");
+    tokio::time::advance(interval / 4).await;
+    busy_delay(Duration::from_millis(100)).await;
+    assert_eq!(job.log_patches(), patches, "Seen an unexpected log patch");
 
-    assert_eq!(job.log_patches(), patches);
+    // Jump time by interval; which should cause a single tick on the trace update interval
+    tokio::time::advance(interval / 2).await;
 
-    // Jump time by 4 seconds; which should cause a single ticket on the trace update interval
-    tokio::time::advance(Duration::from_secs(4)).await;
     // Busy wait for the log patches to be receive by the mock server
-    while job.log_patches() == patches {
-        tokio::task::yield_now().await;
-    }
-
+    busy_wait(|| job.log_patches() == patches).await;
     patches += 1;
+
     assert_eq!(job.log_patches(), patches);
-    assert_eq!(job.log(), *expected);
+    assert_eq!(job.log_last(), Some(vec![b'1', b'2']));
 
     patches
 }
@@ -136,9 +161,8 @@ async fn log_batch(
 // Test Update is called regularily
 #[tokio::test(start_paused = true)]
 async fn update_interval() {
-    let mut expected = Vec::new();
     let mock = GitlabRunnerMock::start().await;
-    let job = mock.add_dummy_job("loging".to_string());
+    let job = mock.add_dummy_job("logging".to_string());
 
     let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
 
@@ -150,23 +174,40 @@ async fn update_interval() {
         .unwrap();
     assert_eq!(true, got_job);
 
-    let mut patches = log_batch(&job, &control, 0, &mut expected).await;
-    patches = log_batch(&job, &control, patches, &mut expected).await;
-    patches = log_batch(&job, &control, patches, &mut expected).await;
+    // Default interval is 3, so do a bit more seconds
+    let interval = Duration::from_secs(4);
+    let mut patches = log_batch(&job, &control, 0, interval).await;
+    patches = log_batch(&job, &control, patches, interval).await;
+    patches = log_batch(&job, &control, patches, interval).await;
 
-    // First state update was pendng -> running
+    // First state update was pending -> running
     assert_eq!(job.state_updates(), 1);
 
-    // After 30 secons of not sending logs a job update should be sent
+    // After 30 seconds of not sending logs a job update should be sent
     tokio::time::advance(Duration::from_secs(40)).await;
-    while job.state_updates() == 1 {
-        tokio::task::yield_now().await;
-    }
+    busy_wait(|| job.state_updates() == 1).await;
     assert_eq!(job.state_updates(), 2);
     assert_eq!(job.log_patches(), patches);
 
     // Check one log attempt to make sure the intervals aren't trying to catch up
-    patches = log_batch(&job, &control, patches, &mut expected).await;
+    patches = log_batch(&job, &control, patches, interval).await;
+
+    // Update interval and then send another trace; the new trace will get the update interval
+    mock.set_update_interval(30);
+    patches = log_batch(&job, &control, patches, interval).await;
+
+    let interval = Duration::from_secs(30);
+    patches = log_batch(&job, &control, patches, interval).await;
+    assert_eq!(job.log_patches(), patches);
+    assert_eq!(job.state_updates(), 2);
+
+    /* Trigger another keepalive by jumping more then the period and more then the default
+     * keepalive of 30 seconds  */
+    tokio::time::advance(Duration::from_secs(40)).await;
+    busy_wait(|| job.state_updates() == 2).await;
+
+    assert_eq!(job.state_updates(), 3);
+    assert_eq!(job.log_patches(), patches);
 
     /* and back to normal */
     tokio::time::resume();
