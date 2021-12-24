@@ -2,7 +2,7 @@
 name = "gitlab-runner"
 version = "0.0.1"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Helper crate to build custom gitlab runners"
 homepage = "https://github.com/collabora/gitlab-runner-rs"

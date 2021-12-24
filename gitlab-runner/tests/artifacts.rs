@@ -40,7 +40,7 @@ impl Download {
                 .unwrap()
                 .expect("No artifacts to download");
             let mut names: Vec<_> = artifact.file_names().collect();
-            names.sort();
+            names.sort_unstable();
             assert_eq!(2, names.len());
             assert_eq!(&["test", "test2"], names.as_slice());
 
@@ -112,7 +112,7 @@ async fn upload_download() {
         .request_job(|_job| async move { Ok(Upload()) })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, upload.state());
 
@@ -120,7 +120,7 @@ async fn upload_download() {
         .request_job(|job| async move { Ok(Download::new(job).await) })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, download.state());
 }

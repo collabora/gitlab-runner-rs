@@ -58,7 +58,6 @@ impl Run {
             .await
             .map_err(|e| {
                 debug!("Fact failure: {:?}", e);
-                ()
             })?;
         Ok(r.data.drain(..).map(|f| f.fact).collect())
     }

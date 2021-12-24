@@ -172,7 +172,7 @@ async fn update_interval() {
         .request_job(|job| async move { Ok(Logger::new(job, rx)) })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
 
     // Default interval is 3, so do a bit more seconds
     let interval = Duration::from_secs(4);

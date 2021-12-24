@@ -7,7 +7,7 @@ use gitlab_runner_mock::{
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use std::task::Poll;
+
 use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
 use tokio::time::sleep;
@@ -178,7 +178,7 @@ impl<T: Debug + Clone> TestJobs<T> {
     }
 
     fn jobs(&self) -> Vec<TestJob<T>> {
-        self.access_jobs(|jobs| jobs.iter().cloned().collect())
+        self.access_jobs(|jobs| jobs.to_vec())
     }
 
     fn running(&self) -> usize {
@@ -205,7 +205,7 @@ async fn job_success() {
         .request_job(|_| SimpleRun::dummy(Ok(())))
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, job.state());
 }
@@ -221,7 +221,7 @@ async fn job_fail() {
         .request_job(|_job| SimpleRun::dummy(Err(())))
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Failed, job.state());
 }
@@ -241,7 +241,7 @@ async fn job_panic() {
         })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Failed, job.state());
 }
@@ -262,7 +262,7 @@ async fn job_log() {
         })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, job.state());
     assert_eq!(b"aabbcc", job.log().as_slice());
@@ -295,7 +295,7 @@ async fn job_steps() {
         })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, job.state());
 }
@@ -366,9 +366,8 @@ async fn runner_run() {
         let t = &testjobs[*n];
         //assert_eq!(MockJobState::Running, t.job.state());
         while t.job.state() == MockJobState::Pending {
-            match futures::poll!(&mut runner) {
-                Poll::Ready(_) => panic!("runner exited"),
-                _ => (),
+            if futures::poll!(&mut runner).is_ready() {
+                panic!("runner exited")
             }
             tokio::task::yield_now().await
         }
@@ -376,9 +375,8 @@ async fn runner_run() {
         t.complete(()).await;
         // busy wait till the job state moves to success
         while !t.job.finished() {
-            match futures::poll!(&mut runner) {
-                Poll::Ready(_) => panic!("runner exited"),
-                _ => (),
+            if futures::poll!(&mut runner).is_ready() {
+                panic!("runner exited")
             }
             tokio::task::yield_now().await
         }
@@ -420,9 +418,8 @@ async fn runner_limit() {
     });
 
     loop {
-        match futures::poll!(&mut runner) {
-            Poll::Ready(_) => panic!("runner exited"),
-            _ => (),
+        if futures::poll!(&mut runner).is_ready() {
+            panic!("runner exited")
         }
         let running = jobs.running();
 
@@ -496,13 +493,13 @@ async fn job_variables() {
         .request_job(|job| async move {
             let id = job.variable("CI_JOB_ID").unwrap();
             assert_eq!(job.id(), id.value().parse::<u64>().unwrap());
-            assert_eq!(true, id.public());
-            assert_eq!(false, id.masked());
+            assert!(id.public());
+            assert!(!id.masked());
             SimpleRun::dummy(Ok(())).await
         })
         .await
         .unwrap();
-    assert_eq!(true, got_job);
+    assert!(got_job);
     runner.wait_job().await;
     assert_eq!(MockJobState::Success, job.state());
 }
