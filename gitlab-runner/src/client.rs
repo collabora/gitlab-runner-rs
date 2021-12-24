@@ -5,6 +5,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 use url::Url;
 
@@ -16,6 +17,8 @@ where
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
 }
+
+const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
 
 #[derive(Debug, Clone, Serialize)]
 struct JobRequest<'a> {
@@ -37,6 +40,16 @@ pub enum JobState {
 struct JobUpdate<'a> {
     token: &'a str,
     state: JobState,
+}
+
+#[derive(Debug, Clone)]
+pub struct JobUpdateReply {
+    trace_update_interval: Option<Duration>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceReply {
+    pub trace_update_interval: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -167,6 +180,8 @@ pub enum Error {
     UnexpectedStatus(StatusCode),
     #[error("Request failure {0}")]
     Request(#[from] reqwest::Error),
+    #[error("Empty trace")]
+    EmptyTrace,
 }
 
 #[derive(Clone, Debug)]
@@ -208,7 +223,12 @@ impl Client {
         }
     }
 
-    pub async fn update_job(&self, id: u64, token: &str, state: JobState) -> Result<(), Error> {
+    pub async fn update_job(
+        &self,
+        id: u64,
+        token: &str,
+        state: JobState,
+    ) -> Result<JobUpdateReply, Error> {
         let mut url = self.url.clone();
         let id_s = format!("{}", id);
         url.path_segments_mut()
@@ -218,8 +238,14 @@ impl Client {
         let update = JobUpdate { token, state };
 
         let r = self.client.put(url).json(&update).send().await?;
+        let trace_update_interval = r
+            .headers()
+            .get(GITLAB_TRACE_UPDATE_INTERVAL)
+            .and_then(|v| Some(Duration::from_secs(v.to_str().ok()?.parse().ok()?)));
         match r.status() {
-            StatusCode::OK => Ok(()),
+            StatusCode::OK => Ok(JobUpdateReply {
+                trace_update_interval,
+            }),
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
@@ -231,10 +257,14 @@ impl Client {
         body: B,
         start: usize,
         length: usize,
-    ) -> Result<(), Error>
+    ) -> Result<TraceReply, Error>
     where
         B: Into<Body>,
     {
+        if length == 0 {
+            return Err(Error::EmptyTrace);
+        }
+
         let mut url = self.url.clone();
         let id_s = format!("{}", id);
         url.path_segments_mut()
@@ -252,8 +282,15 @@ impl Client {
             .send()
             .await?;
 
+        let trace_update_interval = r
+            .headers()
+            .get(GITLAB_TRACE_UPDATE_INTERVAL)
+            .and_then(|v| Some(Duration::from_secs(v.to_str().ok()?.parse().ok()?)));
+
         match r.status() {
-            StatusCode::ACCEPTED => Ok(()),
+            StatusCode::ACCEPTED => Ok(TraceReply {
+                trace_update_interval,
+            }),
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
