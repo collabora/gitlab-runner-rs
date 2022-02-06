@@ -104,8 +104,13 @@ async fn upload_download() {
     let download = download.build();
 
     mock.enqueue_job(download.clone());
+    let dir = tempfile::tempdir().unwrap();
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     // Upload job comes first
     let got_job = runner

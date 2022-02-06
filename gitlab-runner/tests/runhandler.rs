@@ -164,7 +164,12 @@ async fn update_interval() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("logging".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let (control, rx) = LoggerControl::new();
 

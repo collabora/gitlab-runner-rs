@@ -1,6 +1,8 @@
 use bytes::Bytes;
+use log::warn;
 use pin_project::pin_project;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -17,12 +19,17 @@ async fn run<F, J, Ret>(
     client: Client,
     response: Arc<JobResponse>,
     process: F,
+    build_dir: PathBuf,
 ) -> JobResult
 where
     F: FnOnce(Job) -> Ret,
     J: JobHandler,
     Ret: Future<Output = Result<J, ()>>,
 {
+    if let Err(e) = tokio::fs::create_dir(&build_dir).await {
+        job.trace(format!("Failed to remove build dir: {}", e));
+        return Err(());
+    }
     let mut handler = process(job).await?;
 
     let script = response.step(Phase::Script).ok_or(())?;
@@ -54,6 +61,10 @@ where
     };
 
     handler.cleanup().await;
+
+    if let Err(e) = tokio::fs::remove_dir_all(build_dir).await {
+        warn!("Failed to remove build dir: {}", e);
+    }
 
     r
 }
@@ -112,18 +123,23 @@ impl RunHandler {
         Ok(reply.trace_update_interval)
     }
 
-    async fn run<F, J, Ret>(&mut self, process: F)
+    async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,
         J: JobHandler + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
-        let (job, jobdata) = Job::new(self.client.clone(), self.response.clone());
+        let (job, jobdata) = Job::new(
+            self.client.clone(),
+            self.response.clone(),
+            build_dir.clone(),
+        );
         let join = tokio::spawn(run(
             job,
             self.client.clone(),
             self.response.clone(),
             process,
+            build_dir,
         ));
         tokio::pin!(join);
 
@@ -173,7 +189,12 @@ pub(crate) struct Run {
 }
 
 impl Run {
-    pub fn new<F, J, Ret>(process: F, client: Client, response: JobResponse) -> Self
+    pub fn new<F, J, Ret>(
+        process: F,
+        client: Client,
+        response: JobResponse,
+        build_dir: PathBuf,
+    ) -> Self
     where
         F: FnOnce(Job) -> Ret + Sync + Send + 'static,
         J: JobHandler + Send + 'static,
@@ -182,7 +203,7 @@ impl Run {
         // Spawn the processing in another async task to cope with it paniccing
         let mut handler = RunHandler::new(client, response);
 
-        let handle = tokio::spawn(async move { handler.run(process).await });
+        let handle = tokio::spawn(async move { handler.run(process, build_dir).await });
         Self { handle }
     }
 }

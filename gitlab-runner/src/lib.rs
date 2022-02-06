@@ -1,5 +1,7 @@
 mod client;
 
+use std::path::PathBuf;
+
 use crate::client::Client;
 mod run;
 use crate::run::Run;
@@ -37,13 +39,18 @@ pub trait JobHandler: Send {
 pub struct Runner {
     client: Client,
     running: FuturesUnordered<Run>,
+    build_dir: PathBuf,
 }
 
 impl Runner {
-    pub fn new(server: Url, token: String) -> Self {
+    pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
         let client = Client::new(server, token);
         let running = FuturesUnordered::new();
-        Self { client, running }
+        Self {
+            client,
+            running,
+            build_dir,
+        }
     }
 
     pub fn running(&self) -> usize {
@@ -59,8 +66,10 @@ impl Runner {
     {
         let response = self.client.request_job().await?;
         if let Some(response) = response {
+            let mut build_dir = self.build_dir.clone();
+            build_dir.push(format!("{}", response.id));
             self.running
-                .push(Run::new(process, self.client.clone(), response));
+                .push(Run::new(process, self.client.clone(), response, build_dir));
             Ok(true)
         } else {
             Ok(false)

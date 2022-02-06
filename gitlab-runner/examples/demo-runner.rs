@@ -7,6 +7,7 @@ use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
 use log::{debug, info};
 use serde::Deserialize;
 use structopt::StructOpt;
+use tokio::signal::unix::{signal, SignalKind};
 use url::Url;
 
 #[derive(StructOpt)]
@@ -96,7 +97,8 @@ impl Run {
                 }
                 "artifacts" => {
                     for d in self.job.dependencies() {
-                        self.job.trace(format!("Artifacts from : {}\n", d.name()));
+                        self.job
+                            .trace(format!("= Artifacts from : {} =\n", d.name()));
                         if let Some(mut artifact) = d.download().await.unwrap() {
                             for i in 0..artifact.len() {
                                 let (name, data) = {
@@ -157,8 +159,13 @@ impl JobHandler for Run {
 async fn main() {
     env_logger::init();
     let opts = Opts::from_args();
-    let mut runner = Runner::new(opts.server, opts.token);
-    runner
+    let dir = tempfile::tempdir().unwrap();
+    info!("Using {} as build storage prefix", dir.path().display());
+    let mut runner = Runner::new(opts.server, opts.token, dir.path().to_path_buf());
+    let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
+    let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
+    tokio::select! {
+        r = runner
         .run(
             move |job| async move {
                 let amount = match job.variable("AMOUNT") {
@@ -170,7 +177,11 @@ async fn main() {
                 Ok(Run::new(job, amount))
             },
             8,
-        )
-        .await
-        .expect("Couldn't pick up jobs");
+        ) => match r {
+                Ok(_) => info!("Runner exited"),
+                Err(e) => panic!("Failed to pick up new jobs: {}", e)
+        },
+        _ = term.recv() => info!("Got TERM: exiting!"),
+        _ = int.recv() => info!("Got INT: exiting!"),
+    }
 }

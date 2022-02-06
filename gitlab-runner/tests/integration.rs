@@ -199,7 +199,12 @@ async fn job_success() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("job success".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|_| SimpleRun::dummy(Ok(())))
@@ -215,7 +220,12 @@ async fn job_fail() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("fail".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|_job| SimpleRun::dummy(Err(())))
@@ -231,7 +241,12 @@ async fn job_panic() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("panic".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|_job| async {
@@ -251,7 +266,12 @@ async fn job_log() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("log".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|job| async move {
@@ -284,7 +304,12 @@ async fn job_steps() {
     let job = builder.build();
     mock.enqueue_job(job.clone());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|_ob| async move {
@@ -308,7 +333,12 @@ async fn job_parallel() {
         jobs.add_job();
     }
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
     while runner
         .request_job({
             let jobs = jobs.clone();
@@ -351,7 +381,12 @@ async fn runner_run() {
         jobs.add_job();
     }
 
-    let mut r = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
     let mut runner = tokio::task::spawn({
         let jobs = jobs.clone();
         async move {
@@ -399,7 +434,12 @@ async fn runner_limit() {
         jobs.add_job();
     }
 
-    let mut r = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
     let mut runner = tokio::task::spawn({
         let jobs = jobs.clone();
         async move {
@@ -448,7 +488,12 @@ async fn runner_limit() {
 async fn runner_delay() {
     //tokio::time::pause();
     let mock = GitlabRunnerMock::start().await;
-    let mut r = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
     tokio::task::spawn(async move { r.run(|_| SimpleRun::dummy(Ok(())), 1).await });
 
     // Give the runner some time to do a first request and go to sleep
@@ -487,7 +532,12 @@ async fn job_variables() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("variables".to_string());
 
-    let mut runner = Runner::new(mock.uri(), mock.runner_token().to_string());
+    let dir = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
 
     let got_job = runner
         .request_job(|job| async move {

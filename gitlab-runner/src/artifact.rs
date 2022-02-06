@@ -1,6 +1,8 @@
-use std::{io::Read, path::Path};
+use std::{
+    io::{Read, Seek},
+    path::Path,
+};
 
-use bytes::Bytes;
 use zip::read::ZipFile;
 
 pub struct ArtifactFile<'a>(ZipFile<'a>);
@@ -21,14 +23,26 @@ impl Read for ArtifactFile<'_> {
     }
 }
 
+pub(crate) trait ReadSeek: Read + Seek {}
+impl<T> ReadSeek for T where T: Read + Seek {}
+
+impl<T> From<T> for Artifact
+where
+    T: Send + Read + Seek + 'static,
+{
+    fn from(data: T) -> Self {
+        Artifact::new(Box::new(data))
+    }
+}
+
 pub struct Artifact {
-    zip: zip::ZipArchive<std::io::Cursor<Bytes>>,
+    zip: zip::ZipArchive<Box<dyn ReadSeek + Send>>,
 }
 
 impl Artifact {
-    pub(crate) fn new(data: Bytes) -> Self {
-        let reader = std::io::Cursor::new(data);
-        let zip = zip::ZipArchive::new(reader).unwrap();
+    pub(crate) fn new(data: Box<dyn ReadSeek + Send>) -> Self {
+        //let reader = std::io::Cursor::new(data);
+        let zip = zip::ZipArchive::new(data).unwrap();
         Self { zip }
     }
 

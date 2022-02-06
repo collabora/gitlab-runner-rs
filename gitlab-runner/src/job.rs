@@ -1,7 +1,12 @@
 use crate::artifact::Artifact;
-use crate::client::{Client, JobDependency, JobResponse, JobVariable};
+use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
 use bytes::{Bytes, BytesMut};
+use log::info;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use crate::client::Error as ClientError;
 
 pub struct Variable<'a> {
     v: &'a JobVariable,
@@ -60,14 +65,120 @@ impl<'a> Dependency<'a> {
         self.dependency.artifacts_file.as_ref().map(|a| a.size)
     }
 
-    pub async fn download(&self) -> Result<Option<Artifact>, crate::client::Error> {
-        if self.dependency.artifacts_file.is_some() {
-            let bytes = self
-                .job
-                .client
-                .download_artifact(self.dependency.id, &self.dependency.token)
-                .await?;
-            Ok(Some(Artifact::new(bytes)))
+    async fn download_to_file(&self, _file: &JobArtifactFile) -> Result<(), ClientError> {
+        let mut path = self.job.build_dir.join("artifacts");
+        if let Err(e) = tokio::fs::create_dir(&path).await {
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(ClientError::WriteFailure(e));
+            }
+        }
+
+        // TODO this assumes it's all zip artifacts
+        path.push(format!("{}.zip", self.id()));
+        let mut f = tokio::fs::File::create(&path)
+            .await
+            .map_err(ClientError::WriteFailure)?;
+        self.job
+            .client
+            .download_artifact(self.dependency.id, &self.dependency.token, &mut f)
+            .await?;
+        self.job.artifacts.insert_file(self.dependency.id, path);
+        Ok(())
+    }
+
+    async fn download_to_mem(&self, file: &JobArtifactFile) -> Result<(), ClientError> {
+        let mut bytes = Vec::with_capacity(file.size);
+        self.job
+            .client
+            .download_artifact(self.dependency.id, &self.dependency.token, &mut bytes)
+            .await?;
+        self.job.artifacts.insert_data(self.dependency.id, bytes);
+        Ok(())
+    }
+
+    pub async fn download(&self) -> Result<Option<Artifact>, ClientError> {
+        if let Some(file) = &self.dependency.artifacts_file {
+            let cached = self.job.artifacts.get(self.dependency.id).await?;
+            if cached.is_some() {
+                return Ok(cached);
+            }
+
+            // Load up to 64 kilobyte directly into memory; bigger files to storage to not bloat
+            // the memory usage
+            if file.size > 64 * 1024 {
+                info!("Downloading dependency {} to file", self.dependency.id);
+                self.download_to_file(file).await?
+            } else {
+                info!("Downloading dependency {} to mem", self.dependency.id);
+                self.download_to_mem(file).await?
+            }
+            self.job.artifacts.get(self.dependency.id).await
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ArcU8(Arc<Vec<u8>>);
+
+impl ArcU8 {
+    fn new(data: Vec<u8>) -> Self {
+        Self(Arc::new(data))
+    }
+}
+
+impl AsRef<[u8]> for ArcU8 {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref().as_ref()
+    }
+}
+
+#[derive(Clone, Debug)]
+enum CacheData {
+    MemoryBacked(ArcU8),
+    FileBacked(PathBuf),
+}
+
+#[derive(Debug)]
+struct ArtifactCache {
+    data: Mutex<HashMap<u64, CacheData>>,
+}
+
+impl ArtifactCache {
+    fn new() -> Self {
+        ArtifactCache {
+            data: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn insert_file(&self, id: u64, path: PathBuf) {
+        let mut d = self.data.lock().unwrap();
+        d.insert(id, CacheData::FileBacked(path));
+    }
+
+    fn insert_data(&self, id: u64, data: Vec<u8>) {
+        let mut d = self.data.lock().unwrap();
+        d.insert(id, CacheData::MemoryBacked(ArcU8::new(data)));
+    }
+
+    fn lookup(&self, id: u64) -> Option<CacheData> {
+        let d = self.data.lock().unwrap();
+        d.get(&id).cloned()
+    }
+
+    async fn get(&self, id: u64) -> Result<Option<Artifact>, ClientError> {
+        if let Some(data) = self.lookup(id) {
+            match data {
+                CacheData::MemoryBacked(m) => Ok(Some(Artifact::from(std::io::Cursor::new(m)))),
+                CacheData::FileBacked(p) => {
+                    let f = tokio::fs::File::open(p)
+                        .await
+                        .map_err(ClientError::WriteFailure)?;
+                    // Always succeeds as no operations have been started
+                    Ok(Some(Artifact::from(f.try_into_std().unwrap())))
+                }
+            }
         } else {
             Ok(None)
         }
@@ -105,16 +216,24 @@ pub struct Job {
     response: Arc<JobResponse>,
     client: Client,
     data: JobData,
+    build_dir: PathBuf,
+    artifacts: ArtifactCache,
 }
 
 impl Job {
-    pub(crate) fn new(client: Client, response: Arc<JobResponse>) -> (Self, JobData) {
+    pub(crate) fn new(
+        client: Client,
+        response: Arc<JobResponse>,
+        build_dir: PathBuf,
+    ) -> (Self, JobData) {
         let data = JobData::new();
         (
             Self {
                 client,
                 response,
                 data: data.clone(),
+                build_dir,
+                artifacts: ArtifactCache::new(),
             },
             data,
         )
@@ -140,5 +259,10 @@ impl Job {
                 job: self,
                 dependency,
             })
+    }
+
+    /// Get a reference to the jobs build dir.
+    pub fn build_dir(&self) -> &Path {
+        &self.build_dir
     }
 }

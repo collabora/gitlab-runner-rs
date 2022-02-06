@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, StatusCode};
 use serde::de::Deserializer;
@@ -7,6 +6,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use url::Url;
 
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -180,6 +180,8 @@ pub enum Error {
     UnexpectedStatus(StatusCode),
     #[error("Request failure {0}")]
     Request(#[from] reqwest::Error),
+    #[error("Failed to write to destination {0}")]
+    WriteFailure(#[source] futures::io::Error),
     #[error("Empty trace")]
     EmptyTrace,
 }
@@ -295,14 +297,19 @@ impl Client {
         }
     }
 
-    pub async fn download_artifact(&self, id: u64, token: &str) -> Result<Bytes, Error> {
+    pub async fn download_artifact<D: AsyncWrite + Unpin>(
+        &self,
+        id: u64,
+        token: &str,
+        mut dest: D,
+    ) -> Result<(), Error> {
         let mut url = self.url.clone();
         let id_s = format!("{}", id);
         url.path_segments_mut()
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s, "artifacts"]);
 
-        let r = self
+        let mut r = self
             .client
             .get(url)
             .header("JOB-TOKEN", token)
@@ -310,7 +317,12 @@ impl Client {
             .await?;
 
         match r.status() {
-            StatusCode::OK => Ok(r.bytes().await?),
+            StatusCode::OK => {
+                while let Some(ref chunk) = r.chunk().await? {
+                    dest.write_all(chunk).await.map_err(Error::WriteFailure)?
+                }
+                Ok(())
+            }
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
