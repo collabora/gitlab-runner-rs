@@ -118,7 +118,7 @@ async fn upload_download() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, upload.state());
 
     let got_job = runner
@@ -126,6 +126,6 @@ async fn upload_download() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, download.state());
 }

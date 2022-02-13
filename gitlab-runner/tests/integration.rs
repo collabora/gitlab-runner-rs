@@ -211,7 +211,7 @@ async fn job_success() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, job.state());
 }
 
@@ -232,7 +232,7 @@ async fn job_fail() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Failed, job.state());
 }
 
@@ -257,7 +257,7 @@ async fn job_panic() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Failed, job.state());
 }
 
@@ -283,7 +283,7 @@ async fn job_log() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, job.state());
     assert_eq!(b"aabbcc", job.log().as_slice());
 }
@@ -321,7 +321,7 @@ async fn job_steps() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, job.state());
 }
 
@@ -362,10 +362,13 @@ async fn job_parallel() {
         let t = &testjobs[*n];
         assert_eq!(MockJobState::Running, t.job.state());
 
+        let running = runner.running();
         t.complete(()).await;
-        runner.wait_job().await;
+        runner.wait_for_space(running).await;
         assert_eq!(MockJobState::Success, t.job.state());
     }
+
+    assert_eq!(runner.running(), 0);
 
     // Should all have finished successfully now
     assert!(testjobs
@@ -550,6 +553,6 @@ async fn job_variables() {
         .await
         .unwrap();
     assert!(got_job);
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, job.state());
 }

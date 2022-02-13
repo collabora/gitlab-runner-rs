@@ -1,16 +1,13 @@
 use bytes::Bytes;
 use log::warn;
-use pin_project::pin_project;
 use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::task::JoinHandle;
 use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
-use crate::job::Job;
+use crate::job::{Job, JobData};
+use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
 use crate::{JobHandler, JobResult, Phase};
 
@@ -70,25 +67,33 @@ where
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-struct RunHandler {
+pub(crate) struct Run {
     client: Client,
     response: Arc<JobResponse>,
     log_offset: usize,
     interval: Interval,
     // Last time a communication to gitlab was done so it knows the job is alive
     last_alive: Instant,
+    jobdata: RunListEntry<u64, JobData>,
 }
 
-impl RunHandler {
-    fn new(client: Client, response: JobResponse) -> Self {
+impl Run {
+    pub(crate) fn new(
+        client: Client,
+        response: JobResponse,
+        run_list: &mut RunList<u64, JobData>,
+    ) -> Self {
         let response = Arc::new(response);
         let now = Instant::now();
+        let jobdata = JobData::new();
+        let jobdata = run_list.insert(response.id, jobdata);
         Self {
             client,
             response,
             log_offset: 0,
             interval: Self::create_interval(now, Duration::from_secs(3)),
             last_alive: now,
+            jobdata,
         }
     }
 
@@ -123,16 +128,17 @@ impl RunHandler {
         Ok(reply.trace_update_interval)
     }
 
-    async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
+    pub(crate) async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,
         J: JobHandler + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
-        let (job, jobdata) = Job::new(
+        let job = Job::new(
             self.client.clone(),
             self.response.clone(),
             build_dir.clone(),
+            self.jobdata.clone(),
         );
         let join = tokio::spawn(run(
             job,
@@ -149,7 +155,7 @@ impl RunHandler {
                     // Compare against *now* rather then the tick returned instant as that is the
                     // deadline which might have been missed; especially when testing.
                     let now = Instant::now();
-                    if let Some(buf) = jobdata.split_trace() {
+                    if let Some(buf) = self.jobdata.split_trace() {
                         // TODO be resiliant against send errors
                         if let Ok(Some(interval)) = self.send_trace(buf).await {
                             if interval != self.interval.period() {
@@ -168,7 +174,7 @@ impl RunHandler {
         };
 
         // Send the remaining trace buffer back to gitlab.
-        if let Some(buf) = jobdata.split_trace() {
+        if let Some(buf) = self.jobdata.split_trace() {
             let _ = self.send_trace(buf).await.ok();
         }
 
@@ -178,39 +184,5 @@ impl RunHandler {
             Err(_) => JobState::Failed,
         };
         self.update(state).await.expect("Failed to update");
-    }
-}
-
-#[pin_project]
-#[derive(Debug)]
-pub(crate) struct Run {
-    #[pin]
-    handle: JoinHandle<()>,
-}
-
-impl Run {
-    pub fn new<F, J, Ret>(
-        process: F,
-        client: Client,
-        response: JobResponse,
-        build_dir: PathBuf,
-    ) -> Self
-    where
-        F: FnOnce(Job) -> Ret + Sync + Send + 'static,
-        J: JobHandler + Send + 'static,
-        Ret: Future<Output = Result<J, ()>> + Send + 'static,
-    {
-        // Spawn the processing in another async task to cope with it paniccing
-        let mut handler = RunHandler::new(client, response);
-
-        let handle = tokio::spawn(async move { handler.run(process, build_dir).await });
-        Self { handle }
-    }
-}
-
-impl Future for Run {
-    type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().handle.poll(cx).map(|_| ())
     }
 }

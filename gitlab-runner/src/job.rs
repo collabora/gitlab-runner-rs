@@ -191,7 +191,7 @@ pub(crate) struct JobData {
 }
 
 impl JobData {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let trace = Arc::new(Mutex::new(BytesMut::new()));
         Self { trace }
     }
@@ -225,18 +225,15 @@ impl Job {
         client: Client,
         response: Arc<JobResponse>,
         build_dir: PathBuf,
-    ) -> (Self, JobData) {
-        let data = JobData::new();
-        (
-            Self {
-                client,
-                response,
-                data: data.clone(),
-                build_dir,
-                artifacts: ArtifactCache::new(),
-            },
+        data: JobData,
+    ) -> Self {
+        Self {
+            client,
+            response,
             data,
-        )
+            build_dir,
+            artifacts: ArtifactCache::new(),
+        }
     }
 
     pub fn id(&self) -> u64 {

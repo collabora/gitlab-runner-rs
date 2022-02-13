@@ -218,6 +218,6 @@ async fn update_interval() {
     tokio::time::resume();
     control.finish(Ok(())).await;
 
-    runner.wait_job().await;
+    runner.wait_for_space(1).await;
     assert_eq!(MockJobState::Success, job.state());
 }

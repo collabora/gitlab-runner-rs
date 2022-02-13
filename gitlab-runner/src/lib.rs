@@ -7,16 +7,17 @@ mod run;
 use crate::run::Run;
 
 pub mod job;
-use job::Job;
+use job::{Job, JobData};
 
 pub mod uploader;
-use log::warn;
+use runlist::RunList;
 use uploader::Uploader;
 
 mod artifact;
+mod runlist;
 
 use futures::prelude::*;
-use futures::stream::FuturesUnordered;
+use log::warn;
 use tokio::time::{sleep, Duration};
 use url::Url;
 
@@ -38,23 +39,23 @@ pub trait JobHandler: Send {
 #[derive(Debug)]
 pub struct Runner {
     client: Client,
-    running: FuturesUnordered<Run>,
     build_dir: PathBuf,
+    run_list: RunList<u64, JobData>,
 }
 
 impl Runner {
     pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
         let client = Client::new(server, token);
-        let running = FuturesUnordered::new();
+        let run_list = RunList::new();
         Self {
             client,
-            running,
             build_dir,
+            run_list,
         }
     }
 
     pub fn running(&self) -> usize {
-        self.running.len()
+        self.run_list.size()
     }
 
     /// Request a new job from gitlab
@@ -68,33 +69,17 @@ impl Runner {
         if let Some(response) = response {
             let mut build_dir = self.build_dir.clone();
             build_dir.push(format!("{}", response.id));
-            self.running
-                .push(Run::new(process, self.client.clone(), response, build_dir));
+            let mut run = Run::new(self.client.clone(), response, &mut self.run_list);
+            tokio::spawn(async move { run.run(process, build_dir).await });
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    /// Wait for at least one of the current jobs to finish
-    pub async fn wait_job(&mut self) {
-        self.running.next().await;
-    }
-
-    /// Sleep for the given duration while keeping track of outstanding jobs
-    pub async fn sleep(&mut self, timeout: Duration) {
-        let t = sleep(timeout).fuse();
-        if self.running.is_empty() {
-            t.await;
-        } else {
-            futures::pin_mut!(t);
-            loop {
-                futures::select! {
-                    _ = t => break,
-                    _ = self.running.next() => {},
-                };
-            }
-        }
+    /// Wait untill there are leass then max jobs running
+    pub async fn wait_for_space(&mut self, max: usize) {
+        self.run_list.wait_for_space(max).await;
     }
 
     pub async fn run<F, J, Ret>(&mut self, process: F, maximum: usize) -> Result<(), client::Error>
@@ -104,17 +89,14 @@ impl Runner {
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         loop {
-            if self.running.len() < maximum {
-                match self.request_job(process.clone()).await {
-                    /* continue to pick up a new job straight away */
-                    Ok(true) => continue,
-                    Ok(false) => (),
-                    Err(e) => warn!("Couldn't get a job from gitlab: {:?}", e),
-                }
-                self.sleep(Duration::from_secs(5)).await;
-            } else {
-                self.wait_job().await;
+            self.wait_for_space(maximum).await;
+            match self.request_job(process.clone()).await {
+                /* continue to pick up a new job straight away */
+                Ok(true) => continue,
+                Ok(false) => (),
+                Err(e) => warn!("Couldn't get a job from gitlab: {:?}", e),
             }
+            sleep(Duration::from_secs(5)).await;
         }
     }
 }
