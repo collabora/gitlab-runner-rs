@@ -1,12 +1,15 @@
 use futures::future;
 use gitlab_runner::job::Job;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::Registry;
 
 use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
@@ -200,19 +203,24 @@ async fn job_success() {
     let job = mock.add_dummy_job("job success".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|_| SimpleRun::dummy(Ok(())))
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, job.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|_| SimpleRun::dummy(Ok(())))
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -221,19 +229,24 @@ async fn job_fail() {
     let job = mock.add_dummy_job("fail".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|_job| SimpleRun::dummy(Err(())))
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Failed, job.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|_job| SimpleRun::dummy(Err(())))
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Failed, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -242,23 +255,28 @@ async fn job_panic() {
     let job = mock.add_dummy_job("panic".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|_job| async {
-            panic!("Test panic");
-            #[allow(unreachable_code)]
-            SimpleRun::dummy(Ok(())).await
-        })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Failed, job.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|_job| async {
+                panic!("Test panic");
+                #[allow(unreachable_code)]
+                SimpleRun::dummy(Ok(())).await
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Failed, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -267,25 +285,33 @@ async fn job_log() {
     let job = mock.add_dummy_job("log".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|job| async move {
-            job.trace("aa");
-            job.trace("bb");
-            job.trace("cc");
-            SimpleRun::dummy(Ok(())).await
-        })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, job.state());
-    assert_eq!(b"aabbcc", job.log().as_slice());
+    let subscriber = Registry::default().with(layer);
+    async {
+        tracing::info!("TEST");
+        let got_job = runner
+            .request_job(|job| async move {
+                tracing::info!("TEST1234");
+                outputln!("aa");
+                job.trace("bb\n");
+                outputln!("cc");
+                SimpleRun::dummy(Ok(())).await
+            })
+            .with_current_subscriber()
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+        assert_eq!(b"aa\nbb\ncc\n", job.log().as_slice());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -305,24 +331,29 @@ async fn job_steps() {
     mock.enqueue_job(job.clone());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|_ob| async move {
-            Ok(CustomSteps::new(|steps| {
-                assert_eq!(&["command0", "command1"], steps);
-                future::ready(Ok(()))
-            }))
-        })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, job.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|_ob| async move {
+                Ok(CustomSteps::new(|steps| {
+                    assert_eq!(&["command0", "command1"], steps);
+                    future::ready(Ok(()))
+                }))
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -334,46 +365,52 @@ async fn job_parallel() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
-    while runner
-        .request_job({
-            let jobs = jobs.clone();
-            move |job| future::ready(Ok(jobs.register(&job)))
-        })
-        .await
-        .unwrap()
-    {}
 
-    // Picked up 5 jobs
-    assert_eq!(5, runner.running());
+    let subscriber = Registry::default().with(layer);
+    async {
+        while runner
+            .request_job({
+                let jobs = jobs.clone();
+                move |job| future::ready(Ok(jobs.register(&job)))
+            })
+            .await
+            .unwrap()
+        {}
 
-    let testjobs = jobs.jobs();
-    // All are running now
-    assert!(testjobs
-        .iter()
-        .any(|j| j.job.state() == MockJobState::Running));
+        // Picked up 5 jobs
+        assert_eq!(5, runner.running());
 
-    // Complete in random order
-    for n in &[4, 0, 2, 1, 3] {
-        let t = &testjobs[*n];
-        assert_eq!(MockJobState::Running, t.job.state());
+        let testjobs = jobs.jobs();
+        // All are running now
+        assert!(testjobs
+            .iter()
+            .any(|j| j.job.state() == MockJobState::Running));
 
-        let running = runner.running();
-        t.complete(()).await;
-        runner.wait_for_space(running).await;
-        assert_eq!(MockJobState::Success, t.job.state());
+        // Complete in random order
+        for n in &[4, 0, 2, 1, 3] {
+            let t = &testjobs[*n];
+            assert_eq!(MockJobState::Running, t.job.state());
+
+            let running = runner.running();
+            t.complete(()).await;
+            runner.wait_for_space(running).await;
+            assert_eq!(MockJobState::Success, t.job.state());
+        }
+
+        assert_eq!(runner.running(), 0);
+
+        // Should all have finished successfully now
+        assert!(testjobs
+            .iter()
+            .any(|j| j.job.state() == MockJobState::Success));
     }
-
-    assert_eq!(runner.running(), 0);
-
-    // Should all have finished successfully now
-    assert!(testjobs
-        .iter()
-        .any(|j| j.job.state() == MockJobState::Success));
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -385,45 +422,51 @@ async fn runner_run() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let mut r = Runner::new(
+    let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
-    let mut runner = tokio::task::spawn({
-        let jobs = jobs.clone();
-        async move {
-            r.run(move |job| future::ready(Ok(jobs.register(&job))), 5)
-                .await
-        }
-    });
 
-    let testjobs = jobs.jobs();
-    // Complete in random order
-    for n in &[4, 0, 2, 1, 3] {
-        let t = &testjobs[*n];
-        //assert_eq!(MockJobState::Running, t.job.state());
-        while t.job.state() == MockJobState::Pending {
-            if futures::poll!(&mut runner).is_ready() {
-                panic!("runner exited")
+    let subscriber = Registry::default().with(layer);
+    async {
+        let mut runner = tokio::task::spawn({
+            let jobs = jobs.clone();
+            async move {
+                r.run(move |job| future::ready(Ok(jobs.register(&job))), 5)
+                    .await
             }
-            tokio::task::yield_now().await
+        });
+
+        let testjobs = jobs.jobs();
+        // Complete in random order
+        for n in &[4, 0, 2, 1, 3] {
+            let t = &testjobs[*n];
+            //assert_eq!(MockJobState::Running, t.job.state());
+            while t.job.state() == MockJobState::Pending {
+                if futures::poll!(&mut runner).is_ready() {
+                    panic!("runner exited")
+                }
+                tokio::task::yield_now().await
+            }
+
+            t.complete(()).await;
+            // busy wait till the job state moves to success
+            while !t.job.finished() {
+                if futures::poll!(&mut runner).is_ready() {
+                    panic!("runner exited")
+                }
+                tokio::task::yield_now().await
+            }
         }
 
-        t.complete(()).await;
-        // busy wait till the job state moves to success
-        while !t.job.finished() {
-            if futures::poll!(&mut runner).is_ready() {
-                panic!("runner exited")
-            }
-            tokio::task::yield_now().await
-        }
+        // Should all have finished successfully now
+        assert!(testjobs
+            .iter()
+            .all(|j| j.job.state() == MockJobState::Success));
     }
-
-    // Should all have finished successfully now
-    assert!(testjobs
-        .iter()
-        .all(|j| j.job.state() == MockJobState::Success));
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -438,53 +481,59 @@ async fn runner_limit() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let mut r = Runner::new(
+    let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
-    let mut runner = tokio::task::spawn({
-        let jobs = jobs.clone();
-        async move {
-            r.run(
-                {
-                    move |job| {
-                        let mut run = jobs.register(&job);
-                        run.delay = Some(Duration::from_millis(33));
-                        future::ready(Ok(run))
+
+    let subscriber = Registry::default().with(layer);
+    async {
+        let mut runner = tokio::task::spawn({
+            let jobs = jobs.clone();
+            async move {
+                r.run(
+                    {
+                        move |job| {
+                            let mut run = jobs.register(&job);
+                            run.delay = Some(Duration::from_millis(33));
+                            future::ready(Ok(run))
+                        }
+                    },
+                    JOB_LIMIT,
+                )
+                .await
+            }
+        });
+
+        loop {
+            if futures::poll!(&mut runner).is_ready() {
+                panic!("runner exited")
+            }
+            let running = jobs.running();
+
+            assert!(running <= JOB_LIMIT, "running {} > {}", running, N_JOBS);
+            if running == JOB_LIMIT || jobs.pending() == 0 {
+                if let Some(j) = jobs.jobs().iter().find(|j| j.is_running()) {
+                    if !j.completed() {
+                        j.complete(()).await;
                     }
-                },
-                JOB_LIMIT,
-            )
-            .await
-        }
-    });
-
-    loop {
-        if futures::poll!(&mut runner).is_ready() {
-            panic!("runner exited")
-        }
-        let running = jobs.running();
-
-        assert!(running <= JOB_LIMIT, "running {} > {}", running, N_JOBS);
-        if running == JOB_LIMIT || jobs.pending() == 0 {
-            if let Some(j) = jobs.jobs().iter().find(|j| j.is_running()) {
-                if !j.completed() {
-                    j.complete(()).await;
                 }
+            }
+
+            if jobs.finished() == N_JOBS {
+                break;
             }
         }
 
-        if jobs.finished() == N_JOBS {
-            break;
-        }
+        // Should all have finished successfully now
+        assert!(jobs
+            .jobs()
+            .iter()
+            .all(|j| j.job.state() == MockJobState::Success));
     }
-
-    // Should all have finished successfully now
-    assert!(jobs
-        .jobs()
-        .iter()
-        .all(|j| j.job.state() == MockJobState::Success));
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -492,42 +541,48 @@ async fn runner_delay() {
     //tokio::time::pause();
     let mock = GitlabRunnerMock::start().await;
     let dir = tempfile::tempdir().unwrap();
-    let mut r = Runner::new(
+    let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
-    tokio::task::spawn(async move { r.run(|_| SimpleRun::dummy(Ok(())), 1).await });
 
-    // Give the runner some time to do a first request and go to sleep
-    sleep(Duration::from_millis(250)).await;
-    assert_eq!(1, mock.n_requests().await);
+    let subscriber = Registry::default().with(layer);
+    async {
+        tokio::task::spawn(async move { r.run(|_| SimpleRun::dummy(Ok(())), 1).await });
 
-    // Jump ahead for longer then the expected sleep
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(7)).await;
-    tokio::time::resume();
+        // Give the runner some time to do a first request and go to sleep
+        sleep(Duration::from_millis(250)).await;
+        assert_eq!(1, mock.n_requests().await);
 
-    sleep(Duration::from_millis(250)).await;
-    assert_eq!(2, mock.n_requests().await);
+        // Jump ahead for longer then the expected sleep
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(7)).await;
+        tokio::time::resume();
 
-    mock.add_dummy_job("delayed job".to_string());
-    // Jump ahead for longer then the expected sleep
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(7)).await;
-    tokio::time::resume();
+        sleep(Duration::from_millis(250)).await;
+        assert_eq!(2, mock.n_requests().await);
 
-    // 1 request for recieving the job, one to see ther isn't another one
-    sleep(Duration::from_millis(250)).await;
-    assert_eq!(4, mock.n_requests().await);
+        mock.add_dummy_job("delayed job".to_string());
+        // Jump ahead for longer then the expected sleep
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(7)).await;
+        tokio::time::resume();
 
-    // Jump ahead for longer then the expected sleep
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(7)).await;
-    tokio::time::resume();
+        // 1 request for recieving the job, one to see ther isn't another one
+        sleep(Duration::from_millis(250)).await;
+        assert_eq!(4, mock.n_requests().await);
 
-    sleep(Duration::from_millis(250)).await;
-    assert_eq!(5, mock.n_requests().await);
+        // Jump ahead for longer then the expected sleep
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(7)).await;
+        tokio::time::resume();
+
+        sleep(Duration::from_millis(250)).await;
+        assert_eq!(5, mock.n_requests().await);
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
 
 #[tokio::test]
@@ -536,23 +591,28 @@ async fn job_variables() {
     let job = mock.add_dummy_job("variables".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    let got_job = runner
-        .request_job(|job| async move {
-            let id = job.variable("CI_JOB_ID").unwrap();
-            assert_eq!(job.id(), id.value().parse::<u64>().unwrap());
-            assert!(id.public());
-            assert!(!id.masked());
-            SimpleRun::dummy(Ok(())).await
-        })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, job.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|job| async move {
+                let id = job.variable("CI_JOB_ID").unwrap();
+                assert_eq!(job.id(), id.value().parse::<u64>().unwrap());
+                assert!(id.public());
+                assert!(!id.masked());
+                SimpleRun::dummy(Ok(())).await
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }

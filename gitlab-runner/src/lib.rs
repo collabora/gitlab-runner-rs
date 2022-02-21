@@ -1,28 +1,38 @@
+mod artifact;
 mod client;
-
-use std::path::PathBuf;
-
+mod logging;
 use crate::client::Client;
 mod run;
 use crate::run::Run;
-
 pub mod job;
 use job::{Job, JobData};
-
 pub mod uploader;
-use runlist::RunList;
-use uploader::Uploader;
-
-mod artifact;
+pub use logging::GitlabLayer;
+use tracing::instrument::WithSubscriber;
 mod runlist;
+use crate::runlist::RunList;
+use uploader::Uploader;
 
 use futures::prelude::*;
 use log::warn;
+use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
+use tracing_subscriber::{prelude::*, Registry};
+
 use url::Url;
 
 pub type JobResult = Result<(), ()>;
 pub use client::Phase;
+
+#[macro_export]
+macro_rules! outputln {
+      ($f: expr) => {
+          ::tracing::info!(gitlab.output = true, $f)
+      };
+      ($f: expr, $($arg: tt) *) => {
+          ::tracing::trace!(gitlab.output = true, $f, $($arg)*)
+      };
+  }
 
 #[async_trait::async_trait]
 pub trait JobHandler: Send {
@@ -44,16 +54,68 @@ pub struct Runner {
 }
 
 impl Runner {
+    /// Create a new Runner for the given server url and runner token, storing (temporary job
+    /// files) in build_dir
+    ///
+    /// The build_dir is used to store temporary files during a job run. This will also configure a
+    /// default tracing subscriber if that's not wanted use [`Runner::new_with_layer`] instead.
+    ///
+    /// ```
+    /// # use gitlab_runner::Runner;
+    /// # use url::Url;
+    /// #
+    /// let dir = tempfile::tempdir().unwrap();
+    /// let runner = Runner::new(Url::parse("https://gitlab.com/").unwrap(),
+    ///     "RunnerToken".to_string(),
+    ///     dir.path().to_path_buf());
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if a default subscriber is already setup
     pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
-        let client = Client::new(server, token);
-        let run_list = RunList::new();
-        Self {
-            client,
-            build_dir,
-            run_list,
-        }
+        let (runner, layer) = Self::new_with_layer(server, token, build_dir);
+        let subscriber = Registry::default().with(layer);
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("Couldn't set global default subscriber (already set?)");
+
+        runner
     }
 
+    /// Creates a new runner as per [`Runner::new`] and logging layer
+    ///
+    /// The logging layer should attached to the current tracing subscriber while further runner
+    /// calls are made otherwise job logging to gitlab will not work
+    ///
+    /// ```
+    /// # use gitlab_runner::Runner;
+    /// # use url::Url;
+    /// # use tracing_subscriber::{prelude::*, Registry};
+    /// #
+    /// let dir = tempfile::tempdir().unwrap();
+    /// let (runner, layer) = Runner::new_with_layer(Url::parse("https://gitlab.com/").unwrap(),
+    ///     "RunnerToken".to_string(),
+    ///     dir.path().to_path_buf());
+    /// let subscriber = Registry::default().with(layer);
+    ///
+    /// tracing::subscriber::set_global_default(subscriber)
+    ///     .expect("Couldn't set global default subscriber (already set?)");
+    /// ```
+    pub fn new_with_layer(server: Url, token: String, build_dir: PathBuf) -> (Self, GitlabLayer) {
+        let client = Client::new(server, token);
+        let run_list = RunList::new();
+        (
+            Self {
+                client,
+                build_dir,
+                run_list: run_list.clone(),
+            },
+            GitlabLayer::new(run_list),
+        )
+    }
+
+    /// Returns te number of jobs currently running
     pub fn running(&self) -> usize {
         self.run_list.size()
     }
@@ -70,7 +132,9 @@ impl Runner {
             let mut build_dir = self.build_dir.clone();
             build_dir.push(format!("{}", response.id));
             let mut run = Run::new(self.client.clone(), response, &mut self.run_list);
-            tokio::spawn(async move { run.run(process, build_dir).await });
+            tokio::spawn(
+                async move { run.run(process, build_dir).await }.with_current_subscriber(),
+            );
             Ok(true)
         } else {
             Ok(false)

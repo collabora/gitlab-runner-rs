@@ -3,11 +3,12 @@ use std::io::Read;
 use futures::AsyncWriteExt;
 use gitlab_runner::job::Job;
 use gitlab_runner::uploader::Uploader;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
-use log::{debug, info};
+use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
 use serde::Deserialize;
 use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
+use tracing::{debug, info};
+use tracing_subscriber::prelude::*;
 use url::Url;
 
 #[derive(StructOpt)]
@@ -26,6 +27,7 @@ struct Reply {
     data: Vec<Fact>,
 }
 
+#[derive(Debug)]
 struct Run {
     client: reqwest::Client,
     amount: u8,
@@ -63,8 +65,10 @@ impl Run {
         Ok(r.data.drain(..).map(|f| f.fact).collect())
     }
 
+    #[tracing::instrument]
     async fn command(&mut self, command: &str) -> JobResult {
-        self.job.trace(format!("> {}\n", command));
+        outputln!("> {}", command);
+
         let mut p = command.split_whitespace();
         if let Some(cmd) = p.next() {
             debug!("command: >{}<", cmd);
@@ -74,7 +78,7 @@ impl Run {
                         Some(amount) => match amount.parse() {
                             Ok(a) => a,
                             Err(e) => {
-                                self.job.trace(format!("Failed to parse amount: {}\n", e));
+                                outputln!("Failed to parse amount: {}\n", e);
                                 return Err(());
                             }
                         },
@@ -84,21 +88,19 @@ impl Run {
                     let facts = match self.get_facts(amount).await {
                         Ok(f) => f,
                         Err(e) => {
-                            self.job
-                                .trace(format!("Failed to get facts :( - {:?}\n", e));
+                            outputln!("Failed to get facts :( - {:?}\n", e);
                             Vec::new()
                         }
                     };
                     for f in facts {
-                        self.job.trace(format!("Did you know: {}\n", f));
+                        outputln!("Did you know: {}\n", f);
                         self.facts.push(f);
                     }
                     Ok(())
                 }
                 "artifacts" => {
                     for d in self.job.dependencies() {
-                        self.job
-                            .trace(format!("= Artifacts from : {} =\n", d.name()));
+                        outputln!("= Artifacts from : {} =\n", d.name());
                         if let Some(mut artifact) = d.download().await.unwrap() {
                             for i in 0..artifact.len() {
                                 let (name, data) = {
@@ -110,20 +112,20 @@ impl Run {
                                     }
                                     (f.name().to_string(), s)
                                 };
-                                self.job.trace(format!("=== File: {} ===\n", name));
-                                self.job.trace(data);
+                                outputln!("=== File: {} ===", name);
+                                outputln!("{}", data);
                             }
                         }
                     }
                     Ok(())
                 }
                 _ => {
-                    self.job.trace("Unknown command\n");
+                    outputln!("Unknown command\n");
                     Err(())
                 }
             }
         } else {
-            self.job.trace("empty command");
+            outputln!("empty command");
             Err(())
         }
     }
@@ -160,10 +162,23 @@ async fn main() {
     env_logger::init();
     let opts = Opts::from_args();
     let dir = tempfile::tempdir().unwrap();
+
     info!("Using {} as build storage prefix", dir.path().display());
-    let mut runner = Runner::new(opts.server, opts.token, dir.path().to_path_buf());
+    let (mut runner, layer) =
+        Runner::new_with_layer(opts.server, opts.token, dir.path().to_path_buf());
+
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(
+            tracing_subscriber::fmt::Layer::new().with_filter(tracing::metadata::LevelFilter::INFO),
+        )
+        .with(layer);
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Couldn't set global default subscriber (already set?)");
+
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
+
     tokio::select! {
         r = runner
         .run(

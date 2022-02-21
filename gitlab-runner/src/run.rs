@@ -4,6 +4,8 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
+use tracing::instrument::WithSubscriber;
+use tracing::Instrument;
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
 use crate::job::{Job, JobData};
@@ -128,6 +130,7 @@ impl Run {
         Ok(reply.trace_update_interval)
     }
 
+    #[tracing::instrument(skip(self, process,build_dir),fields(gitlab.job=self.response.id))]
     pub(crate) async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,
@@ -140,13 +143,17 @@ impl Run {
             build_dir.clone(),
             self.jobdata.clone(),
         );
-        let join = tokio::spawn(run(
-            job,
-            self.client.clone(),
-            self.response.clone(),
-            process,
-            build_dir,
-        ));
+        let join = tokio::spawn(
+            run(
+                job,
+                self.client.clone(),
+                self.response.clone(),
+                process,
+                build_dir,
+            )
+            .in_current_span()
+            .with_current_subscriber(),
+        );
         tokio::pin!(join);
 
         let result = loop {
