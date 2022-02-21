@@ -48,8 +48,8 @@ impl Respond for JobArtifactsUploader {
 
                 let boundary = ct
                     .as_str()
-                    .splitn(2, "boundary=")
-                    .nth(1)
+                    .split_once("boundary=")
+                    .map(|x| x.1)
                     .expect("Missing boundary");
 
                 let mut multipart =
