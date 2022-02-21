@@ -44,7 +44,7 @@ struct JobUpdate<'a> {
 
 #[derive(Debug, Clone)]
 pub struct JobUpdateReply {
-    trace_update_interval: Option<Duration>,
+    pub trace_update_interval: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
