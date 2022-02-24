@@ -119,6 +119,24 @@ async fn busy_delay(d: Duration) {
     busy_wait(|| deadline >= std::time::Instant::now()).await
 }
 
+async fn log_ping(job: &MockJob, control: &LoggerControl, mut patches: u32) -> u32 {
+    let ping = "ping";
+    control.log_wait(ping.to_string()).await;
+
+    // Make a leap forward; The logging loop doesn't catch up with lost ticks so this syncs up the
+    // interval again
+    tokio::time::advance(Duration::from_secs(100)).await;
+
+    // Busy wait for the log patches to be receive by the mock server
+    busy_wait(|| job.log_patches() == patches).await;
+    patches += 1;
+
+    assert_eq!(job.log_patches(), patches);
+    assert_eq!(job.log_last(), Some(ping.as_bytes().to_vec()));
+
+    patches
+}
+
 /// Log a various lines and check if it got logged in one batch
 /// This will flush the job buffer!
 async fn log_batch(
@@ -179,9 +197,14 @@ async fn update_interval() {
         .unwrap();
     assert!(got_job);
 
+    let mut patches = 0;
+    // Ping the logger which guarantees the job is fully started as well as getting the logging
+    // loop back into a known point.
+    patches = log_ping(&job, &control, patches).await;
+
     // Default interval is 3, so do a bit more seconds
     let interval = Duration::from_secs(4);
-    let mut patches = log_batch(&job, &control, 0, interval).await;
+    patches = log_batch(&job, &control, patches, interval).await;
     patches = log_batch(&job, &control, patches, interval).await;
     patches = log_batch(&job, &control, patches, interval).await;
 
