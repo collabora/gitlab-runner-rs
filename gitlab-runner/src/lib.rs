@@ -21,6 +21,9 @@ use tracing_subscriber::{prelude::*, Registry};
 
 use url::Url;
 
+#[cfg(doctest)]
+doc_comment::doctest!("../../README.md");
+
 pub type JobResult = Result<(), ()>;
 pub use client::Phase;
 
