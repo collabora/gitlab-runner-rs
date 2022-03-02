@@ -27,13 +27,15 @@ doc_comment::doctest!("../../README.md");
 pub type JobResult = Result<(), ()>;
 pub use client::Phase;
 
+#[doc(hidden)]
+pub use ::tracing;
 #[macro_export]
 macro_rules! outputln {
       ($f: expr) => {
-          ::tracing::info!(gitlab.output = true, $f)
+          $crate::tracing::info!(gitlab.output = true, $f)
       };
       ($f: expr, $($arg: tt) *) => {
-          ::tracing::trace!(gitlab.output = true, $f, $($arg)*)
+          $crate::tracing::trace!(gitlab.output = true, $f, $($arg)*)
       };
   }
 
