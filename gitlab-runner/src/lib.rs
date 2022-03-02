@@ -1,4 +1,4 @@
-mod artifact;
+pub mod artifact;
 mod client;
 mod logging;
 use crate::client::Client;
