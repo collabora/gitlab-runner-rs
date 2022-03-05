@@ -7,6 +7,7 @@ use std::{sync::Arc, task::Poll};
 use futures::{future::BoxFuture, AsyncWrite, FutureExt};
 use tokio::sync::mpsc::{self, error::SendError};
 use tokio::sync::oneshot;
+use tracing::warn;
 
 use crate::{
     client::{Client, JobResponse},
@@ -144,7 +145,8 @@ impl Uploader {
         self.client
             .upload_artifact(self.data.id, &self.data.token, "artifacts.zip", data)
             .await
-            .unwrap();
-        Ok(())
+            .map_err(|e| {
+                warn!("Failed to upload artifacts: {:?}", e);
+            })
     }
 }
