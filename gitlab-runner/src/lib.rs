@@ -151,6 +151,11 @@ impl Runner {
         self.run_list.wait_for_space(max).await;
     }
 
+    /// Wait untill there are no more jobs running
+    pub async fn drain(&mut self) {
+        self.run_list.wait_for_space(1).await;
+    }
+
     pub async fn run<F, J, Ret>(&mut self, process: F, maximum: usize) -> Result<(), client::Error>
     where
         F: Fn(Job) -> Ret + Sync + Send + 'static + Clone,

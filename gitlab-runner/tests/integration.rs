@@ -616,3 +616,46 @@ async fn job_variables() {
     .with_subscriber(subscriber)
     .await;
 }
+
+#[tokio::test]
+async fn job_drain() {
+    let mock = GitlabRunnerMock::start().await;
+    let jobs = TestJobs::new(mock.clone());
+    for _ in 0..5 {
+        jobs.add_job();
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut runner, layer) = Runner::new_with_layer(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
+
+    let subscriber = Registry::default().with(layer);
+    async {
+        while runner
+            .request_job({
+                let jobs = jobs.clone();
+                move |job| future::ready(Ok(jobs.register(&job)))
+            })
+            .await
+            .unwrap()
+        {}
+
+        // Picked up 5 jobs
+        assert_eq!(5, runner.running());
+        let testjobs = jobs.jobs();
+        for n in &[4, 0, 2, 1, 3] {
+            let t = &testjobs[*n];
+            assert_eq!(MockJobState::Running, t.job.state());
+
+            t.complete(()).await;
+        }
+
+        runner.drain().await;
+        assert_eq!(0, runner.running());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
