@@ -32,7 +32,7 @@ pub use ::tracing;
 #[macro_export]
 macro_rules! outputln {
       ($f: expr) => {
-          $crate::tracing::info!(gitlab.output = true, $f)
+          $crate::tracing::trace!(gitlab.output = true, $f)
       };
       ($f: expr, $($arg: tt) *) => {
           $crate::tracing::trace!(gitlab.output = true, $f, $($arg)*)
