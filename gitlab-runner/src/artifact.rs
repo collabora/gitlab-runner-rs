@@ -58,6 +58,10 @@ impl Artifact {
         self.zip.by_index(i).ok().map(ArtifactFile)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.zip.is_empty()
+    }
+
     pub fn len(&self) -> usize {
         self.zip.len()
     }
