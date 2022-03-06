@@ -187,10 +187,7 @@ impl Runner {
     /// let (runner, layer) = Runner::new_with_layer(Url::parse("https://gitlab.com/").unwrap(),
     ///     "RunnerToken".to_string(),
     ///     dir.path().to_path_buf());
-    /// let subscriber = Registry::default().with(layer);
-    ///
-    /// tracing::subscriber::set_global_default(subscriber)
-    ///     .expect("Couldn't set global default subscriber (already set?)");
+    /// let subscriber = Registry::default().with(layer).init();
     /// ```
     pub fn new_with_layer(server: Url, token: String, build_dir: PathBuf) -> (Self, GitlabLayer) {
         let client = Client::new(server, token);
