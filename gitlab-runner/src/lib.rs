@@ -80,9 +80,9 @@ use crate::runlist::RunList;
 use uploader::Uploader;
 
 use futures::prelude::*;
-use log::warn;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
+use tracing::warn;
 use tracing_subscriber::{prelude::*, Registry};
 
 use url::Url;
@@ -165,10 +165,7 @@ impl Runner {
     /// Panics if a default subscriber is already setup
     pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
         let (runner, layer) = Self::new_with_layer(server, token, build_dir);
-        let subscriber = Registry::default().with(layer);
-
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("Couldn't set global default subscriber (already set?)");
+        Registry::default().with(layer).init();
 
         runner
     }

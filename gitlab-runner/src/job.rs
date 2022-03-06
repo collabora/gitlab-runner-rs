@@ -2,10 +2,10 @@
 use crate::artifact::Artifact;
 use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
 use bytes::{Bytes, BytesMut};
-use log::info;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tracing::info;
 
 use crate::client::Error as ClientError;
 

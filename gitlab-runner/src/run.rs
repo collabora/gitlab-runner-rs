@@ -1,10 +1,10 @@
 use bytes::Bytes;
-use log::warn;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
 use tracing::instrument::WithSubscriber;
+use tracing::warn;
 use tracing::Instrument;
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};

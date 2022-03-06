@@ -65,7 +65,7 @@ impl Run {
         Ok(r.data.drain(..).map(|f| f.fact).collect())
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn command(&mut self, command: &str) -> JobResult {
         outputln!("> {}", command);
 
@@ -155,26 +155,30 @@ impl JobHandler for Run {
         }
         Ok(())
     }
+
+    async fn cleanup(&mut self) {
+        info!("Finished job");
+    }
 }
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
     let opts = Opts::from_args();
     let dir = tempfile::tempdir().unwrap();
 
-    info!("Using {} as build storage prefix", dir.path().display());
     let (mut runner, layer) =
         Runner::new_with_layer(opts.server, opts.token, dir.path().to_path_buf());
 
-    let subscriber = tracing_subscriber::Registry::default()
+    tracing_subscriber::Registry::default()
         .with(
-            tracing_subscriber::fmt::Layer::new().with_filter(tracing::metadata::LevelFilter::INFO),
+            tracing_subscriber::fmt::Layer::new()
+                .pretty()
+                .with_filter(tracing::metadata::LevelFilter::INFO),
         )
-        .with(layer);
+        .with(layer)
+        .init();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Couldn't set global default subscriber (already set?)");
+    info!("Using {} as build storage prefix", dir.path().display());
 
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
@@ -188,7 +192,7 @@ async fn main() {
                     _ => 1u8,
                 };
 
-                info!("Created run");
+                info!("Created new job run");
                 Ok(Run::new(job, amount))
             },
             8,
