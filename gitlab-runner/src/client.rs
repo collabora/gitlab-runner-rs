@@ -80,10 +80,13 @@ pub enum JobStepWhen {
     OnSuccess,
 }
 
+/// Phase of the gitlab job steps
 #[derive(Copy, Clone, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
+    /// script step; Practically this is before_script + script as defined in the gitlab job yaml
     Script,
+    /// after_script step
     AfterScript,
 }
 

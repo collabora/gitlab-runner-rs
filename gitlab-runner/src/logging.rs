@@ -50,6 +50,10 @@ impl field::Visit for OutputToGitlab {
     }
 }
 
+/// A [`Layer`] for gitlab
+///
+/// This tracing layer interfaces the tracing infrastructure with running gitlab jobs. It always
+/// has to be registered in the current subscriber
 pub struct GitlabLayer {
     run_list: RunList<u64, JobData>,
 }

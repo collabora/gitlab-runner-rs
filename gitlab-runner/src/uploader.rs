@@ -1,3 +1,4 @@
+//! Helpers to upload to gitlab
 use std::future::Future;
 use std::io::Write;
 use std::pin::Pin;
@@ -62,6 +63,7 @@ fn zip_thread(mut rx: mpsc::Receiver<UploadRequest>) {
     }
 }
 
+/// Single file to be uploaded
 pub struct UploadFile<'a> {
     tx: &'a mpsc::Sender<UploadRequest>,
     state: UploadFileState<'a>,
@@ -114,6 +116,7 @@ impl<'a> AsyncWrite for UploadFile<'a> {
     }
 }
 
+/// An upload to gitlab
 pub struct Uploader {
     client: Client,
     data: Arc<JobResponse>,
@@ -127,6 +130,7 @@ impl Uploader {
         Self { client, data, tx }
     }
 
+    /// Create a new file to be uploaded
     pub async fn file(&mut self, name: String) -> UploadFile<'_> {
         self.tx
             .send(UploadRequest::NewFile(name))

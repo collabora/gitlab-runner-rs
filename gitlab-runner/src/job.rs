@@ -1,3 +1,4 @@
+//! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
 use bytes::{Bytes, BytesMut};
@@ -8,22 +9,34 @@ use std::sync::{Arc, Mutex};
 
 use crate::client::Error as ClientError;
 
+/// Gitlab job environment variable
+///
+/// To get the underlying value [`Variable::value`] should be used, however this should not be
+/// directly displayed in the log. For displaying to the user the Variable's
+/// [`Display`](`std::fmt::Display`)
+/// implementation should be used (e.g. via `{}` as that will show the value taking the masked
+/// status into account
 pub struct Variable<'a> {
     v: &'a JobVariable,
 }
 
 impl<'a> Variable<'a> {
+    /// Get the key of the variable
     pub fn key(&self) -> &'a str {
         &self.v.key
     }
 
+    /// Get the value of the variable
     pub fn value(&self) -> &'a str {
         &self.v.value
     }
 
+    /// Whether or not the variable is masked
     pub fn masked(&self) -> bool {
         self.v.masked
     }
+
+    /// Whether or not the variable is public
     pub fn public(&self) -> bool {
         self.v.public
     }
@@ -39,6 +52,11 @@ impl std::fmt::Display for Variable<'_> {
     }
 }
 
+/// A dependency of a gitlab job
+///
+/// Dependencies in gitlab are the jobs that had to be run before this job could run.
+/// This can happen either implicitly in the pipeline definition via stages of directly
+/// via `needs` keyword
 #[derive(Debug)]
 pub struct Dependency<'a> {
     job: &'a Job,
@@ -46,14 +64,21 @@ pub struct Dependency<'a> {
 }
 
 impl<'a> Dependency<'a> {
+    /// The id of the dependency
+    ///
+    /// This id matches the job id of the generated this depenency
     pub fn id(&self) -> u64 {
         self.dependency.id
     }
 
+    /// The name job that creaof the dependency
+    ///
+    /// This name matches the job name of the job that generated this depenency
     pub fn name(&self) -> &str {
         &self.dependency.name
     }
 
+    /// The filename of the dependencies artifact if it has one
     pub fn artifact_filename(&self) -> Option<&str> {
         self.dependency
             .artifacts_file
@@ -61,6 +86,7 @@ impl<'a> Dependency<'a> {
             .map(|a| a.filename.as_str())
     }
 
+    /// The size of the dependencies artifact if it has one
     pub fn artifact_size(&self) -> Option<usize> {
         self.dependency.artifacts_file.as_ref().map(|a| a.size)
     }
@@ -96,6 +122,10 @@ impl<'a> Dependency<'a> {
         Ok(())
     }
 
+    /// Download dependencies artifact
+    ///
+    /// This downloads the actual artifact file from gitlab if it hadn't been downloaded yet.
+    /// Bigger files get saved on the filesystem while small ones are simply cached in memory
     pub async fn download(&self) -> Result<Option<Artifact>, ClientError> {
         if let Some(file) = &self.dependency.artifacts_file {
             let cached = self.job.artifacts.get(self.dependency.id).await?;
@@ -211,6 +241,7 @@ impl JobData {
     }
 }
 
+/// A running Gitlab Job
 #[derive(Debug)]
 pub struct Job {
     response: Arc<JobResponse>,
@@ -236,18 +267,25 @@ impl Job {
         }
     }
 
+    /// Get the job id
     pub fn id(&self) -> u64 {
         self.response.id
     }
 
+    /// Sent data to the gitlab log
+    ///
+    /// Normally [`outputln!`] should be used. This function directly puts data in the queue for
+    /// the gitlab log and side-steps the tracing infrastructure
     pub fn trace<D: AsRef<[u8]>>(&self, data: D) {
         self.data.trace(data.as_ref());
     }
 
+    /// Get the variable matching the given key
     pub fn variable(&self, key: &str) -> Option<Variable> {
         self.response.variables.get(key).map(|v| Variable { v })
     }
 
+    /// Get an iterator over the job dependencies
     pub fn dependencies(&self) -> impl Iterator<Item = Dependency> {
         self.response
             .dependencies
