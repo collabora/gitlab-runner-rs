@@ -1,3 +1,4 @@
+use http_types::StatusCode;
 // Required for serde_json::json macro on the massive job json
 use serde::Deserialize;
 use serde_json::json;
@@ -14,9 +15,26 @@ use crate::{GitlabRunnerMock, MockJobState};
 }
 */
 
+#[derive(Default, Deserialize)]
+struct FeaturesInfo {
+    // This feature tells GitLab that the runner supports cloning from refspecs,
+    // which is needed for the server to send jobs from run on detached MR
+    // pipelines.
+    #[serde(default)]
+    refspecs: bool,
+}
+
+#[derive(Default, Deserialize)]
+struct VersionInfo {
+    #[serde(default)]
+    features: FeaturesInfo,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct JobRequest {
     token: String,
+    #[serde(default)]
+    info: VersionInfo,
 }
 
 pub(crate) struct JobRequestResponder {
@@ -35,6 +53,10 @@ impl Respond for JobRequestResponder {
 
         if r.token != self.mock.runner_token() {
             return ResponseTemplate::new(403);
+        }
+
+        if !r.info.features.refspecs {
+            return ResponseTemplate::new(StatusCode::NoContent);
         }
 
         if let Some(job) = self.mock.grab_pending_job() {
@@ -230,7 +252,7 @@ impl Respond for JobRequestResponder {
                 }
             }))
         } else {
-            ResponseTemplate::new(204)
+            ResponseTemplate::new(StatusCode::NoContent)
         }
     }
 }

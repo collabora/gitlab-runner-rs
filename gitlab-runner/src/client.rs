@@ -21,8 +21,19 @@ where
 const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
 
 #[derive(Debug, Clone, Serialize)]
+struct FeaturesInfo {
+    refspecs: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VersionInfo {
+    features: FeaturesInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct JobRequest<'a> {
     token: &'a str,
+    info: VersionInfo,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,7 +217,13 @@ impl Client {
     }
 
     pub async fn request_job(&self) -> Result<Option<JobResponse>, Error> {
-        let request = JobRequest { token: &self.token };
+        let request = JobRequest {
+            token: &self.token,
+            info: VersionInfo {
+                // Setting `refspecs` is required to run detached MR pipelines.
+                features: FeaturesInfo { refspecs: true },
+            },
+        };
 
         let mut url = self.url.clone();
         url.path_segments_mut()
