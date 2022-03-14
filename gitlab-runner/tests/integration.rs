@@ -587,8 +587,23 @@ async fn runner_delay() {
 
 #[tokio::test]
 async fn job_variables() {
+    const TEST_VARIABLE: &str = "TEST_VARIABLE";
+    const TEST_VALUE: &str = "a testing value";
+
     let mock = GitlabRunnerMock::start().await;
-    let job = mock.add_dummy_job("variables".to_string());
+    let mut builder = mock.job_builder("variables".to_string());
+
+    builder.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_owned()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    builder.add_variable(TEST_VARIABLE.to_owned(), TEST_VALUE.to_owned(), false, true);
+
+    let job = builder.build();
+    mock.enqueue_job(job.clone());
 
     let dir = tempfile::tempdir().unwrap();
     let (mut runner, layer) = Runner::new_with_layer(
@@ -605,6 +620,12 @@ async fn job_variables() {
                 assert_eq!(job.id(), id.value().parse::<u64>().unwrap());
                 assert!(id.public());
                 assert!(!id.masked());
+
+                let test = job.variable(TEST_VARIABLE).unwrap();
+                assert_eq!(test.value(), TEST_VALUE);
+                assert!(!test.public());
+                assert!(test.masked());
+
                 SimpleRun::dummy(Ok(())).await
             })
             .await

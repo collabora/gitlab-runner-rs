@@ -1,8 +1,11 @@
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use thiserror::Error;
+
+use crate::variables::default_job_variables;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,6 +37,14 @@ pub(crate) struct MockJobInner {
     artifact: Arc<Vec<u8>>,
     log: Vec<Vec<u8>>,
     log_patches: u32,
+}
+
+#[derive(Clone, Serialize, Debug)]
+pub struct MockJobVariable {
+    pub key: String,
+    pub value: String,
+    pub public: bool,
+    pub masked: bool,
 }
 
 #[derive(Copy, Clone, Serialize, Debug, Eq, PartialEq)]
@@ -84,6 +95,7 @@ pub struct MockJob {
     name: String,
     id: u64,
     token: String,
+    variables: Vec<MockJobVariable>,
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
     artifacts: Vec<MockJobArtifact>,
@@ -122,6 +134,10 @@ impl MockJob {
 
     pub fn artifacts(&self) -> &[MockJobArtifact] {
         &self.artifacts
+    }
+
+    pub fn variables(&self) -> &[MockJobVariable] {
+        &self.variables
     }
 
     pub fn steps(&self) -> &[MockJobStep] {
@@ -202,6 +218,7 @@ impl MockJob {
 pub struct MockJobBuilder {
     name: String,
     id: u64,
+    variables: HashMap<String, MockJobVariable>,
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
     artifacts: Vec<MockJobArtifact>,
@@ -212,8 +229,24 @@ impl MockJobBuilder {
         Self {
             name,
             id,
+            variables: default_job_variables(id)
+                .into_iter()
+                .map(|v| (v.key.clone(), v))
+                .collect(),
             ..Default::default()
         }
+    }
+
+    pub fn add_variable(&mut self, key: String, value: String, public: bool, masked: bool) {
+        self.variables.insert(
+            key.clone(),
+            MockJobVariable {
+                key,
+                value,
+                public,
+                masked,
+            },
+        );
     }
 
     pub fn add_step(
@@ -293,6 +326,7 @@ impl MockJobBuilder {
             id: self.id,
             token: format!("job-token-{}", self.id),
             steps: self.steps,
+            variables: self.variables.into_values().collect(),
             dependencies: self.dependencies,
             artifacts: self.artifacts,
             inner,
