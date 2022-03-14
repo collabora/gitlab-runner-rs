@@ -8,6 +8,7 @@ use wiremock::matchers::{body_json_schema, method, path, path_regex};
 use wiremock::{Mock, MockServer};
 
 mod job;
+mod variables;
 pub use job::{MockJob, MockJobBuilder, MockJobState, MockJobStepName, MockJobStepWhen};
 
 mod api;
