@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use zip::read::ZipFile;
+use zip::{read::ZipFile, result::ZipResult};
 
 /// A file in a gitlab artifact
 ///
@@ -35,15 +35,6 @@ impl Read for ArtifactFile<'_> {
 pub(crate) trait ReadSeek: Read + Seek {}
 impl<T> ReadSeek for T where T: Read + Seek {}
 
-impl<T> From<T> for Artifact
-where
-    T: Send + Read + Seek + 'static,
-{
-    fn from(data: T) -> Self {
-        Artifact::new(Box::new(data))
-    }
-}
-
 /// An artifact downloaded from gitlab
 ///
 /// The artifact holds a set of files which can be read out one by one
@@ -52,10 +43,9 @@ pub struct Artifact {
 }
 
 impl Artifact {
-    pub(crate) fn new(data: Box<dyn ReadSeek + Send>) -> Self {
-        //let reader = std::io::Cursor::new(data);
-        let zip = zip::ZipArchive::new(data).unwrap();
-        Self { zip }
+    pub(crate) fn new(data: Box<dyn ReadSeek + Send>) -> ZipResult<Self> {
+        let zip = zip::ZipArchive::new(data)?;
+        Ok(Self { zip })
     }
 
     /// Iterator of the files names inside the artifacts

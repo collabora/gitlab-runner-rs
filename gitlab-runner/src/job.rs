@@ -200,13 +200,15 @@ impl ArtifactCache {
     async fn get(&self, id: u64) -> Result<Option<Artifact>, ClientError> {
         if let Some(data) = self.lookup(id) {
             match data {
-                CacheData::MemoryBacked(m) => Ok(Some(Artifact::from(std::io::Cursor::new(m)))),
+                CacheData::MemoryBacked(m) => {
+                    Ok(Some(Artifact::new(Box::new(std::io::Cursor::new(m)))?))
+                }
                 CacheData::FileBacked(p) => {
                     let f = tokio::fs::File::open(p)
                         .await
                         .map_err(ClientError::WriteFailure)?;
                     // Always succeeds as no operations have been started
-                    Ok(Some(Artifact::from(f.try_into_std().unwrap())))
+                    Ok(Some(Artifact::new(Box::new(f.try_into_std().unwrap()))?))
                 }
             }
         } else {
