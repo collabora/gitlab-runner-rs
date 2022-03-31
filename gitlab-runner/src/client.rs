@@ -8,6 +8,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use url::Url;
+use zip::result::ZipError;
 
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -196,6 +197,8 @@ pub enum Error {
     Request(#[from] reqwest::Error),
     #[error("Failed to write to destination {0}")]
     WriteFailure(#[source] futures::io::Error),
+    #[error("Failed to parse zip file: {0}")]
+    ZipFile(#[from] ZipError),
     #[error("Empty trace")]
     EmptyTrace,
 }
