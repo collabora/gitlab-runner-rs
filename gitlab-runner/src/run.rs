@@ -48,12 +48,16 @@ where
     });
 
     let r = if upload {
-        let mut uploader = Uploader::new(client, response);
-        let r = handler.upload_artifacts(&mut uploader).await;
-        if r.is_ok() {
-            uploader.upload().await.and(script_result)
+        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
+            let r = handler.upload_artifacts(&mut uploader).await;
+            if r.is_ok() {
+                uploader.upload().await.and(script_result)
+            } else {
+                r
+            }
         } else {
-            r
+            warn!("Failed to create uploader");
+            Err(())
         }
     } else {
         script_result

@@ -1,13 +1,18 @@
 //! Helpers to upload to gitlab
+use std::fs::File;
 use std::future::Future;
-use std::io::Write;
+use std::io::{Seek, Write};
+use std::path::Path;
 use std::pin::Pin;
 use std::thread;
 use std::{sync::Arc, task::Poll};
 
 use futures::{future::BoxFuture, AsyncWrite, FutureExt};
+use reqwest::Body;
+use tokio::fs::File as AsyncFile;
 use tokio::sync::mpsc::{self, error::SendError};
 use tokio::sync::oneshot;
+use tokio_util::io::ReaderStream;
 use tracing::warn;
 
 use crate::{
@@ -19,7 +24,7 @@ use crate::{
 enum UploadRequest {
     NewFile(String),
     WriteData(Vec<u8>, oneshot::Sender<std::io::Result<()>>),
-    Finish(oneshot::Sender<std::io::Result<Vec<u8>>>),
+    Finish(oneshot::Sender<std::io::Result<File>>),
 }
 
 enum UploadFileState<'a> {
@@ -30,9 +35,8 @@ enum UploadFileState<'a> {
     ),
 }
 
-fn zip_thread(mut rx: mpsc::Receiver<UploadRequest>) {
-    let mut buf = Vec::new();
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
+    let mut zip = zip::ZipWriter::new(&mut temp);
     let options =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
@@ -50,7 +54,7 @@ fn zip_thread(mut rx: mpsc::Receiver<UploadRequest>) {
                     let r = zip.finish();
                     drop(zip);
                     let reply = match r {
-                        Ok(_) => Ok(buf),
+                        Ok(_) => temp.rewind().map(|()| temp),
                         Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                     };
                     tx.send(reply).expect("Couldn't send finished zip");
@@ -124,10 +128,17 @@ pub struct Uploader {
 }
 
 impl Uploader {
-    pub(crate) fn new(client: Client, data: Arc<JobResponse>) -> Self {
+    pub(crate) fn new(
+        client: Client,
+        build_dir: &Path,
+        data: Arc<JobResponse>,
+    ) -> Result<Self, ()> {
+        let temp = tempfile::tempfile_in(build_dir)
+            .map_err(|e| warn!("Failed to create artifacts temp file: {:?}", e))?;
+
         let (tx, rx) = mpsc::channel(2);
-        thread::spawn(move || zip_thread(rx));
-        Self { client, data, tx }
+        thread::spawn(move || zip_thread(temp, rx));
+        Ok(Self { client, data, tx })
     }
 
     /// Create a new file to be uploaded
@@ -145,9 +156,25 @@ impl Uploader {
     pub(crate) async fn upload(self) -> JobResult {
         let (tx, rx) = oneshot::channel();
         self.tx.send(UploadRequest::Finish(tx)).await.unwrap();
-        let data = rx.await.unwrap().unwrap();
+        let file = AsyncFile::from_std(match rx.await {
+            Ok(Ok(file)) => Ok(file),
+            Ok(Err(err)) => {
+                warn!("Failed to zip artifacts: {:?}", err);
+                Err(())
+            }
+            Err(_) => {
+                warn!("Failed to zip artifacts: thread died");
+                Err(())
+            }
+        }?);
+        let reader = ReaderStream::new(file);
         self.client
-            .upload_artifact(self.data.id, &self.data.token, "artifacts.zip", data)
+            .upload_artifact(
+                self.data.id,
+                &self.data.token,
+                "artifacts.zip",
+                Body::wrap_stream(reader),
+            )
             .await
             .map_err(|e| {
                 warn!("Failed to upload artifacts: {:?}", e);
