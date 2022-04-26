@@ -19,7 +19,7 @@ serde = { version = "1.0.125", features = [ "derive" ] }
 serde_json = "1.0.64"
 thiserror = "1.0.24"
 bytes = "1.0.1"
-zip = "0.5.12"
+zip = "0.6.2"
 pin-project = "1.0.7"
 futures = "0.3.15"
 async-trait = "0.1.50"
