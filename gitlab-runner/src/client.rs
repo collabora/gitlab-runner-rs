@@ -142,7 +142,7 @@ impl Default for ArtifactFormat {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct JobArtifact {
     pub name: Option<String>,
-    #[serde(deserialize_with = "deserialize_null_default")]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub untracked: bool,
     pub paths: Vec<String>,
     #[serde(deserialize_with = "deserialize_null_default")]

@@ -86,15 +86,25 @@ impl Respond for JobRequestResponder {
                 .artifacts()
                 .iter()
                 .map(|a| {
-                    json!({
+                    let mut value = json!({
                         "name": a.name,
-                        "untracked": a.untracked,
                         "paths": a.paths,
                         "when": a.when,
                         "exprire_in": a.expire_in,
                         "artifact_type": a.artifact_type,
                         "artifact_format": a.artifact_format,
-                    })
+                    });
+
+                    // Missing values for 'untracked' should be treated as
+                    // false, so we "test" that out here.
+                    if a.untracked {
+                        value
+                            .as_object_mut()
+                            .unwrap()
+                            .insert("untracked".to_owned(), json!(a.untracked));
+                    }
+
+                    value
                 })
                 .collect();
             ResponseTemplate::new(201).set_body_json(json!({
