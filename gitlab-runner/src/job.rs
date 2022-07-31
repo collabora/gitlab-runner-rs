@@ -287,6 +287,11 @@ impl Job {
         self.response.variables.get(key).map(|v| Variable { v })
     }
 
+    /// Get an iterator over all the variables associated with this job.
+    pub fn variables(&self) -> impl Iterator<Item = Variable> {
+        self.response.variables.values().map(|v| Variable { v })
+    }
+
     /// Get an iterator over the job dependencies
     pub fn dependencies(&self) -> impl Iterator<Item = Dependency> {
         self.response
