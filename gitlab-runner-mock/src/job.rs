@@ -116,6 +116,25 @@ impl MockJob {
         builder.build()
     }
 
+    pub(crate) fn new_completed(name: String, id: u64, artifact: Vec<u8>) -> Self {
+        Self {
+            name,
+            id,
+            token: format!("job-token-{}", id),
+            variables: Vec::new(),
+            steps: Vec::new(),
+            dependencies: Vec::new(),
+            artifacts: Vec::new(),
+            inner: Arc::new(Mutex::new(MockJobInner {
+                state: MockJobState::Success,
+                state_updates: 2,
+                artifact: Arc::new(artifact),
+                log: Vec::new(),
+                log_patches: 0,
+            })),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
