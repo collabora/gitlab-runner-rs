@@ -107,6 +107,17 @@ impl GitlabRunnerMock {
         job
     }
 
+    pub fn add_completed_job(&self, name: String, artifact: Vec<u8>) -> MockJob {
+        let mut jobs = self.inner.jobs.lock().unwrap();
+        jobs.last_id += 1;
+
+        let job = MockJob::new_completed(name, jobs.last_id, artifact);
+
+        jobs.jobs.push(job.clone());
+
+        job
+    }
+
     pub fn job_builder(&self, name: String) -> MockJobBuilder {
         let mut jobs = self.inner.jobs.lock().unwrap();
         jobs.last_id += 1;
