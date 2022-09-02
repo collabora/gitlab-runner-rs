@@ -40,7 +40,7 @@ impl Respond for JobTraceResponder {
             return ResponseTemplate::new(400);
         };
 
-        if let Some(job) = self.mock.find_job(id) {
+        if let Some(job) = self.mock.get_job(id) {
             if token != job.token() {
                 ResponseTemplate::new(403)
             } else {

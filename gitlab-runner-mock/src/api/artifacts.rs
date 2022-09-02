@@ -35,7 +35,7 @@ impl Respond for JobArtifactsUploader {
             return ResponseTemplate::new(403);
         };
 
-        if let Some(job) = self.mock.find_job(id) {
+        if let Some(job) = self.mock.get_job(id) {
             if token != job.token() {
                 ResponseTemplate::new(403)
             } else {
@@ -100,7 +100,7 @@ impl Respond for JobArtifactsDownloader {
             return ResponseTemplate::new(StatusCode::Forbidden);
         };
 
-        if let Some(job) = self.mock.find_job(id) {
+        if let Some(job) = self.mock.get_job(id) {
             if token != job.token() {
                 ResponseTemplate::new(StatusCode::Forbidden)
             } else {
