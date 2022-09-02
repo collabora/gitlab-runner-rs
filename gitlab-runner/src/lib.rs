@@ -71,7 +71,7 @@ use crate::client::Client;
 mod run;
 use crate::run::Run;
 pub mod job;
-use job::{Job, JobData};
+use job::{Job, JobLog};
 pub mod uploader;
 pub use logging::GitlabLayer;
 use tracing::instrument::WithSubscriber;
@@ -140,7 +140,7 @@ pub trait JobHandler: Send {
 pub struct Runner {
     client: Client,
     build_dir: PathBuf,
-    run_list: RunList<u64, JobData>,
+    run_list: RunList<u64, JobLog>,
 }
 
 impl Runner {

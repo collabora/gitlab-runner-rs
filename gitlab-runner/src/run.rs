@@ -8,7 +8,7 @@ use tracing::warn;
 use tracing::Instrument;
 
 use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
-use crate::job::{Job, JobData};
+use crate::job::{Job, JobLog};
 use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
 use crate::{JobHandler, JobResult, Phase};
@@ -80,26 +80,26 @@ pub(crate) struct Run {
     interval: Interval,
     // Last time a communication to gitlab was done so it knows the job is alive
     last_alive: Instant,
-    jobdata: RunListEntry<u64, JobData>,
+    joblog: RunListEntry<u64, JobLog>,
 }
 
 impl Run {
     pub(crate) fn new(
         client: Client,
         response: JobResponse,
-        run_list: &mut RunList<u64, JobData>,
+        run_list: &mut RunList<u64, JobLog>,
     ) -> Self {
         let response = Arc::new(response);
         let now = Instant::now();
-        let jobdata = JobData::new();
-        let jobdata = run_list.insert(response.id, jobdata);
+        let joblog = JobLog::new();
+        let joblog = run_list.insert(response.id, joblog);
         Self {
             client,
             response,
             log_offset: 0,
             interval: Self::create_interval(now, Duration::from_secs(3)),
             last_alive: now,
-            jobdata,
+            joblog,
         }
     }
 
@@ -145,7 +145,7 @@ impl Run {
             self.client.clone(),
             self.response.clone(),
             build_dir.clone(),
-            self.jobdata.clone(),
+            self.joblog.clone(),
         );
         let join = tokio::spawn(
             run(
@@ -166,7 +166,7 @@ impl Run {
                     // Compare against *now* rather then the tick returned instant as that is the
                     // deadline which might have been missed; especially when testing.
                     let now = Instant::now();
-                    if let Some(buf) = self.jobdata.split_trace() {
+                    if let Some(buf) = self.joblog.split_trace() {
                         // TODO be resiliant against send errors
                         if let Ok(Some(interval)) = self.send_trace(buf).await {
                             if interval != self.interval.period() {
@@ -185,7 +185,7 @@ impl Run {
         };
 
         // Send the remaining trace buffer back to gitlab.
-        if let Some(buf) = self.jobdata.split_trace() {
+        if let Some(buf) = self.joblog.split_trace() {
             let _ = self.send_trace(buf).await.ok();
         }
 

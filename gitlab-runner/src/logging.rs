@@ -1,7 +1,7 @@
 use tracing::{field, metadata::LevelFilter, Subscriber};
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::{job::JobData, runlist::RunList};
+use crate::{job::JobLog, runlist::RunList};
 
 #[derive(Clone, Debug)]
 struct GitlabJob(u64);
@@ -33,19 +33,19 @@ impl field::Visit for GitlabOutput {
 
 #[derive(Debug)]
 struct OutputToGitlab {
-    jobdata: JobData,
+    joblog: JobLog,
 }
 
 impl field::Visit for OutputToGitlab {
     fn record_str(&mut self, field: &field::Field, value: &str) {
         if field.name() == "message" {
-            self.jobdata.trace(format!("{}\n", value).as_bytes());
+            self.joblog.trace(format!("{}\n", value).as_bytes());
         }
     }
 
     fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.jobdata.trace(format!("{:?}\n", value).as_bytes());
+            self.joblog.trace(format!("{:?}\n", value).as_bytes());
         }
     }
 }
@@ -55,11 +55,11 @@ impl field::Visit for OutputToGitlab {
 /// This tracing layer interfaces the tracing infrastructure with running gitlab jobs. It always
 /// has to be registered in the current subscriber
 pub struct GitlabLayer {
-    run_list: RunList<u64, JobData>,
+    run_list: RunList<u64, JobLog>,
 }
 
 impl GitlabLayer {
-    pub(crate) fn new(run_list: RunList<u64, JobData>) -> Self {
+    pub(crate) fn new(run_list: RunList<u64, JobLog>) -> Self {
         GitlabLayer { run_list }
     }
 }
@@ -79,8 +79,8 @@ where
                     .from_root()
                     .find_map(|span| span.extensions().get::<GitlabJob>().cloned())
                 {
-                    if let Some(jobdata) = self.run_list.lookup(&jobinfo.0) {
-                        event.record(&mut OutputToGitlab { jobdata });
+                    if let Some(joblog) = self.run_list.lookup(&jobinfo.0) {
+                        event.record(&mut OutputToGitlab { joblog });
                     }
                 }
             }
