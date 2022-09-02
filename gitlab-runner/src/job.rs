@@ -218,11 +218,11 @@ impl ArtifactCache {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct JobData {
+pub(crate) struct JobLog {
     trace: Arc<Mutex<BytesMut>>,
 }
 
-impl JobData {
+impl JobLog {
     pub(crate) fn new() -> Self {
         let trace = Arc::new(Mutex::new(BytesMut::new()));
         Self { trace }
@@ -248,7 +248,7 @@ impl JobData {
 pub struct Job {
     response: Arc<JobResponse>,
     client: Client,
-    data: JobData,
+    log: JobLog,
     build_dir: PathBuf,
     artifacts: ArtifactCache,
 }
@@ -258,12 +258,12 @@ impl Job {
         client: Client,
         response: Arc<JobResponse>,
         build_dir: PathBuf,
-        data: JobData,
+        log: JobLog,
     ) -> Self {
         Self {
             client,
             response,
-            data,
+            log,
             build_dir,
             artifacts: ArtifactCache::new(),
         }
@@ -279,7 +279,7 @@ impl Job {
     /// Normally [`outputln!`] should be used. This function directly puts data in the queue for
     /// the gitlab log and side-steps the tracing infrastructure
     pub fn trace<D: AsRef<[u8]>>(&self, data: D) {
-        self.data.trace(data.as_ref());
+        self.log.trace(data.as_ref());
     }
 
     /// Get the variable matching the given key
