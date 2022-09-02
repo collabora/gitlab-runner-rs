@@ -33,7 +33,7 @@ impl Respond for JobUpdateResponder {
             .parse()
             .unwrap();
 
-        if let Some(job) = self.mock.find_job(id) {
+        if let Some(job) = self.mock.get_job(id) {
             if r.token != job.token() {
                 ResponseTemplate::new(403)
             } else {

@@ -135,7 +135,7 @@ impl GitlabRunnerMock {
         None
     }
 
-    fn find_job(&self, id: u64) -> Option<MockJob> {
+    pub fn get_job(&self, id: u64) -> Option<MockJob> {
         let jobs = self.inner.jobs.lock().unwrap();
         for job in jobs.jobs.iter() {
             if job.id() == id {
