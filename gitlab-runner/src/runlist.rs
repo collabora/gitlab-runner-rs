@@ -8,7 +8,7 @@ pub(crate) struct RunListEntry<K, V>
 where
     K: Eq + std::hash::Hash,
 {
-    inner: Arc<Inner<K, V>>,
+    owner: Arc<Inner<K, V>>,
     key: K,
     value: V,
 }
@@ -29,7 +29,7 @@ where
     K: Eq + std::hash::Hash,
 {
     fn drop(&mut self) {
-        self.inner.remove(&self.key);
+        self.owner.remove(&self.key);
     }
 }
 
@@ -91,7 +91,7 @@ where
         r.insert(id.clone(), data.clone());
         self.inner.changed.send_replace(r.len());
         RunListEntry {
-            inner: self.inner.clone(),
+            owner: self.inner.clone(),
             key: id,
             value: data,
         }
