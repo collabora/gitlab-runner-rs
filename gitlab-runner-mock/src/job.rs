@@ -14,11 +14,29 @@ pub enum MockJobState {
     Running,
     Success,
     Failed,
+    Cancelled,
 }
 
 impl MockJobState {
     pub fn finished(self) -> bool {
         self == Self::Success || self == Self::Failed
+    }
+}
+
+impl ToString for MockJobState {
+    fn to_string(&self) -> String {
+        match *self {
+            MockJobState::Pending => "pending",
+            MockJobState::Running => "running",
+            MockJobState::Success => "success",
+            MockJobState::Failed => "failed",
+            // The spelling mismatch of "cancelled" vs "canceled" is
+            // intentional: this crate, as well as tokio_util, already use
+            // "cancelled", so using it here keeps the spelling consistent, even
+            // if it's not *identical* to the exact GitLab job status.
+            MockJobState::Cancelled => "canceled",
+        }
+        .to_owned()
     }
 }
 
@@ -196,6 +214,13 @@ impl MockJob {
     pub fn artifact(&self) -> Arc<Vec<u8>> {
         let inner = self.inner.lock().unwrap();
         inner.artifact.clone()
+    }
+
+    pub fn cancel(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        assert!(!inner.state.finished(), "Job is already finished");
+        inner.state_updates += 1;
+        inner.state = MockJobState::Cancelled;
     }
 
     pub(crate) fn update_state(&self, state: MockJobState) {

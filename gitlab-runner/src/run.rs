@@ -3,6 +3,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
+use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
 use tracing::warn;
 use tracing::Instrument;
@@ -11,7 +12,8 @@ use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
 use crate::job::{Job, JobLog};
 use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
-use crate::{JobHandler, JobResult, Phase};
+use crate::CancellableJobHandler;
+use crate::{JobResult, Phase};
 
 async fn run<F, J, Ret>(
     job: Job,
@@ -19,10 +21,11 @@ async fn run<F, J, Ret>(
     response: Arc<JobResponse>,
     process: F,
     build_dir: PathBuf,
+    cancel_token: CancellationToken,
 ) -> JobResult
 where
     F: FnOnce(Job) -> Ret,
-    J: JobHandler,
+    J: CancellableJobHandler,
     Ret: Future<Output = Result<J, ()>>,
 {
     if let Err(e) = tokio::fs::create_dir(&build_dir).await {
@@ -31,21 +34,32 @@ where
     }
     let mut handler = process(job).await?;
 
-    let script = response.step(Phase::Script).ok_or(())?;
-    // TODO handle timeout
-    let script_result = handler.step(&script.script, Phase::Script).await;
+    let script_result = if !cancel_token.is_cancelled() {
+        let script = response.step(Phase::Script).ok_or(())?;
+        let script_result = handler
+            .step(&script.script, Phase::Script, &cancel_token)
+            .await;
 
-    if let Some(after) = response.step(Phase::AfterScript) {
-        /* gitlab ignores the after_script result; so do the same */
-        let _ = handler.step(&after.script, Phase::AfterScript).await;
-    }
+        if !cancel_token.is_cancelled() {
+            if let Some(after) = response.step(Phase::AfterScript) {
+                // gitlab ignores the after_script result; so do the same
+                let _ = handler
+                    .step(&after.script, Phase::AfterScript, &cancel_token)
+                    .await;
+            }
+        }
 
-    //let upload = match response.
-    let upload = response.artifacts.get(0).map_or(false, |a| match a.when {
-        ArtifactWhen::Always => true,
-        ArtifactWhen::OnSuccess => script_result.is_ok(),
-        ArtifactWhen::OnFailure => script_result.is_err(),
-    });
+        script_result
+    } else {
+        Ok(())
+    };
+
+    let upload = !cancel_token.is_cancelled()
+        && response.artifacts.get(0).map_or(false, |a| match a.when {
+            ArtifactWhen::Always => true,
+            ArtifactWhen::OnSuccess => script_result.is_ok(),
+            ArtifactWhen::OnFailure => script_result.is_err(),
+        });
 
     let r = if upload {
         if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
@@ -109,18 +123,27 @@ impl Run {
         interval
     }
 
-    async fn update(&self, state: JobState) -> Result<(), crate::client::Error> {
-        self.client
+    async fn update(&self, state: JobState, cancel_token: &CancellationToken) {
+        match self
+            .client
             .update_job(self.response.id, &self.response.token, state)
-            .await?;
-        Ok(())
+            .await
+        {
+            Ok(_reply) => (),
+            Err(crate::client::Error::JobCancelled) => cancel_token.cancel(),
+            Err(err) => warn!("Failed to update job status: {:?}", err),
+        }
     }
 
-    async fn send_trace(&mut self, buf: Bytes) -> Result<Option<Duration>, crate::client::Error> {
+    async fn send_trace(
+        &mut self,
+        buf: Bytes,
+        cancel_token: &CancellationToken,
+    ) -> Option<Duration> {
         assert!(!buf.is_empty());
         let len = buf.len();
 
-        let reply = self
+        match self
             .client
             .trace(
                 self.response.id,
@@ -129,18 +152,32 @@ impl Run {
                 self.log_offset,
                 len,
             )
-            .await?;
-        self.log_offset += len;
-        Ok(reply.trace_update_interval)
+            .await
+        {
+            Ok(reply) => {
+                self.log_offset += len;
+                reply.trace_update_interval
+            }
+            Err(crate::client::Error::JobCancelled) => {
+                cancel_token.cancel();
+                None
+            }
+            Err(err) => {
+                warn!("Failed to send job trace: {:?}", err);
+                None
+            }
+        }
     }
 
     #[tracing::instrument(skip(self, process,build_dir),fields(gitlab.job=self.response.id))]
     pub(crate) async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,
-        J: JobHandler + 'static,
+        J: CancellableJobHandler + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
+        let cancel_token = CancellationToken::new();
+
         let job = Job::new(
             self.client.clone(),
             self.response.clone(),
@@ -154,6 +191,7 @@ impl Run {
                 self.response.clone(),
                 process,
                 build_dir,
+                cancel_token.clone(),
             )
             .in_current_span()
             .with_current_subscriber(),
@@ -168,15 +206,15 @@ impl Run {
                     let now = Instant::now();
                     if let Some(buf) = self.joblog.split_trace() {
                         // TODO be resiliant against send errors
-                        if let Ok(Some(interval)) = self.send_trace(buf).await {
+                        if let Some(interval) = self.send_trace(buf, &cancel_token).await {
                             if interval != self.interval.period() {
                                 self.interval = Self::create_interval(now, interval);
                             }
                         }
                         self.last_alive = now;
-                    } else if now - self.last_alive >  KEEPALIVE_INTERVAL {
+                    } else if now - self.last_alive > KEEPALIVE_INTERVAL {
                         // In case of errors another update will be sent at the next tick
-                        let _ = self.update(JobState::Running).await;
+                        self.update(JobState::Running, &cancel_token).await;
                         self.last_alive = now;
                     }
                 },
@@ -186,14 +224,17 @@ impl Run {
 
         // Send the remaining trace buffer back to gitlab.
         if let Some(buf) = self.joblog.split_trace() {
-            let _ = self.send_trace(buf).await.ok();
+            self.send_trace(buf, &cancel_token).await;
         }
 
-        let state = match result {
-            Ok(Ok(_)) => JobState::Success,
-            Ok(Err(_)) => JobState::Failed,
-            Err(_) => JobState::Failed,
-        };
-        self.update(state).await.expect("Failed to update");
+        // Don't bother updating the status if cancelled, since it will just fail.
+        if !cancel_token.is_cancelled() {
+            let state = match result {
+                Ok(Ok(_)) => JobState::Success,
+                Ok(Err(_)) => JobState::Failed,
+                Err(_) => JobState::Failed,
+            };
+            self.update(state, &cancel_token).await;
+        }
     }
 }

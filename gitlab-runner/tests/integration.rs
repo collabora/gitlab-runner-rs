@@ -15,6 +15,15 @@ use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
 use tokio::time::sleep;
 
+async fn log_until_cancel() {
+    // Output repeatedly because calling /trace will also check the job status
+    // to see if it's cancelled.
+    loop {
+        outputln!("logging!");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 struct SimpleRun<S> {
     step: Option<S>,
 }
@@ -59,6 +68,65 @@ where
 {
     async fn step(&mut self, steps: &[String], _phase: Phase) -> JobResult {
         (self.steps)(steps).await
+    }
+}
+
+struct NotifyOnDrop {
+    sender: Option<Sender<()>>,
+}
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.sender.take().unwrap().send(()).unwrap();
+    }
+}
+struct CancellableRunHandle {
+    dropped: Option<Receiver<()>>,
+    started: Option<Receiver<()>>,
+}
+
+impl CancellableRunHandle {
+    async fn started(&mut self) {
+        self.started.take().unwrap().await.unwrap();
+    }
+
+    async fn dropped(&mut self) {
+        self.dropped.take().unwrap().await.unwrap();
+    }
+}
+
+struct CancellableRun {
+    dropped: Option<Sender<()>>,
+    started: Option<Sender<()>>,
+}
+
+impl CancellableRun {
+    fn new() -> (Self, CancellableRunHandle) {
+        let (dropped_send, dropped_recv) = oneshot::channel();
+        let (started_send, started_recv) = oneshot::channel();
+
+        (
+            Self {
+                dropped: Some(dropped_send),
+                started: Some(started_send),
+            },
+            CancellableRunHandle {
+                dropped: Some(dropped_recv),
+                started: Some(started_recv),
+            },
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for CancellableRun {
+    async fn step(&mut self, _steps: &[String], _phase: Phase) -> JobResult {
+        self.started.take().expect("restarted?").send(()).unwrap();
+        let _notify_on_drop = NotifyOnDrop {
+            sender: Some(self.dropped.take().expect("restarted?")),
+        };
+        log_until_cancel().await;
+        Ok(())
     }
 }
 
@@ -274,6 +342,36 @@ async fn job_panic() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Failed, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[tokio::test]
+async fn job_cancel_step() {
+    let mock = GitlabRunnerMock::start().await;
+    let job = mock.add_dummy_job("cancel steps".to_string());
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut runner, layer) = Runner::new_with_layer(
+        mock.uri(),
+        mock.runner_token().to_owned(),
+        dir.path().to_path_buf(),
+    );
+
+    let (run, mut handle) = CancellableRun::new();
+
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner.request_job(|_job| future::ok(run)).await.unwrap();
+        assert!(got_job);
+        handle.started().await;
+
+        job.cancel();
+
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Cancelled, job.state());
+        handle.dropped().await;
     }
     .with_subscriber(subscriber)
     .await;

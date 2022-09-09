@@ -20,6 +20,7 @@ where
 }
 
 const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
+const JOB_STATUS: &str = "Job-Status";
 
 #[derive(Debug, Clone, Serialize)]
 struct FeaturesInfo {
@@ -193,6 +194,8 @@ impl JobResponse {
 pub enum Error {
     #[error("Unexpected reply code {0}")]
     UnexpectedStatus(StatusCode),
+    #[error("Job cancelled")]
+    JobCancelled,
     #[error("Request failure {0}")]
     Request(#[from] reqwest::Error),
     #[error("Failed to write to destination {0}")]
@@ -248,6 +251,13 @@ impl Client {
         }
     }
 
+    fn check_for_job_cancellation(&self, response: &reqwest::Response) -> Result<(), Error> {
+        match response.headers().get(JOB_STATUS) {
+            Some(header) if header == "canceled" => Err(Error::JobCancelled),
+            _ => Ok(()),
+        }
+    }
+
     pub async fn update_job(
         &self,
         id: u64,
@@ -263,6 +273,9 @@ impl Client {
         let update = JobUpdate { token, state };
 
         let r = self.client.put(url).json(&update).send().await?;
+
+        self.check_for_job_cancellation(&r)?;
+
         let trace_update_interval = r
             .headers()
             .get(GITLAB_TRACE_UPDATE_INTERVAL)
@@ -306,6 +319,8 @@ impl Client {
             .body(body)
             .send()
             .await?;
+
+        self.check_for_job_cancellation(&r)?;
 
         let trace_update_interval = r
             .headers()

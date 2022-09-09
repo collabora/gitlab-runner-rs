@@ -74,6 +74,7 @@ pub mod job;
 use job::{Job, JobLog};
 pub mod uploader;
 pub use logging::GitlabLayer;
+use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
 mod runlist;
 use crate::runlist::RunList;
@@ -105,7 +106,53 @@ macro_rules! outputln {
 pub type JobResult = Result<(), ()>;
 pub use client::Phase;
 
+/// Async trait for handling a single Job that handles its own cancellation
+///
+/// This trait is largely identical to [`JobHandler`], but its methods explicitly take a
+/// `CancellationToken`, which will be triggered if GitLab cancels the job, after which the method
+/// will be responsible for cancellation appropriately. In most cases, the entire execution should
+/// simply be cancelled, in which case [`JobHandler`]'s default behavior is desirable instead. (Even
+/// when cancelled, `cleanup` will still be called, allowing any cleanup tasks to be performed.)
+///
+/// Note that this is an asynchronous trait which should be implemented by using the [`async_trait`]
+/// crate. However this also means the rustdoc documentation is interesting...
+#[async_trait::async_trait]
+pub trait CancellableJobHandler: Send {
+    /// Do a single step of a job
+    ///
+    /// This gets called for each phase of the job (e.g. script and after_script). The passed
+    /// string array is the same array as was passed for a given step in the job definition. If the
+    /// job is cancelled while this is running, the given `cancel_token` will be triggered.
+    ///
+    /// Note that gitlab concatinates the `before_script` and `script` arrays into a single
+    /// [Phase::Script] step
+    async fn step(
+        &mut self,
+        script: &[String],
+        phase: Phase,
+        cancel_token: &CancellationToken,
+    ) -> JobResult;
+    /// Upload artifacts to gitlab
+    ///
+    /// This gets called depending on whether the job definition calls for artifacts to be uploaded
+    /// based on the result of the script run. If the job is cancelled while this is running, it
+    /// will still be run to completion. If the job was already cancelled, this will not be called.
+    async fn upload_artifacts(&mut self, _uploader: &mut Uploader) -> JobResult {
+        Ok(())
+    }
+    /// Cleanup after the job is finished
+    ///
+    /// This method always get called whether or not the job succeeded or was acancelled, allowing
+    /// the job handler to clean up as necessary.
+    async fn cleanup(&mut self) {}
+}
+
 /// Async trait for handling a single Job
+///
+/// In the event of being cancelled by GitLab, the `step` function will have its future dropped
+/// instantly. If manual handling of cancellation is required, use `CancellableJobHandler` instead.
+/// (Even when cancelled, `cleanup` will still be called, allowing any cleanup tasks to be
+/// performed.)
 ///
 /// Note that this is an asynchronous trait which should be implemented by using the [`async_trait`]
 /// crate. However this also means the rustdoc documentation is interesting...
@@ -114,7 +161,9 @@ pub trait JobHandler: Send {
     /// Do a single step of a job
     ///
     /// This gets called for each phase of the job (e.g. script and after_script). The passed
-    /// string array is the same array as was passed for a given step in the job definition.cold
+    /// string array is the same array as was passed for a given step in the job definition. If the
+    /// job is cancelled while this is running, its future will dropped, resulting in the function's
+    /// termination.
     ///
     /// Note that gitlab concatinates the `before_script` and `script` arrays into a single
     /// [Phase::Script] step
@@ -122,15 +171,42 @@ pub trait JobHandler: Send {
     /// Upload artifacts to gitlab
     ///
     /// This gets called depending on whether the job definition calls for artifacts to be uploaded
-    /// based on the result of the script run
+    /// based on the result of the script run. If the job is cancelled while this is running, it
+    /// will still be run to completion. If the job was already cancelled, this will not be called.
     async fn upload_artifacts(&mut self, _uploader: &mut Uploader) -> JobResult {
         Ok(())
     }
     /// Cleanup after the job is finished
     ///
-    /// This method always get called whether or not the job succeeded, allowing the job handler to
-    /// clean up as necessary.
+    /// This method always get called whether or not the job succeeded or was cancelled, allowing
+    /// the job handler to clean up as necessary.
     async fn cleanup(&mut self) {}
+}
+
+#[async_trait::async_trait]
+impl<J> CancellableJobHandler for J
+where
+    J: JobHandler,
+{
+    async fn step(
+        &mut self,
+        script: &[String],
+        phase: Phase,
+        cancel_token: &CancellationToken,
+    ) -> JobResult {
+        tokio::select! {
+            r = self.step(script, phase) => r,
+            _ = cancel_token.cancelled() => Ok(()),
+        }
+    }
+
+    async fn upload_artifacts(&mut self, uploader: &mut Uploader) -> JobResult {
+        self.upload_artifacts(uploader).await
+    }
+
+    async fn cleanup(&mut self) {
+        self.cleanup().await;
+    }
 }
 
 /// Runner for gitlab
@@ -216,7 +292,7 @@ impl Runner {
     pub async fn request_job<F, J, Ret>(&mut self, process: F) -> Result<bool, client::Error>
     where
         F: FnOnce(Job) -> Ret + Sync + Send + 'static,
-        J: JobHandler + Send + 'static,
+        J: CancellableJobHandler + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         let response = self.client.request_job().await?;
@@ -250,7 +326,7 @@ impl Runner {
     pub async fn run<F, J, Ret>(&mut self, process: F, maximum: usize) -> Result<(), client::Error>
     where
         F: Fn(Job) -> Ret + Sync + Send + 'static + Clone,
-        J: JobHandler + Send + 'static,
+        J: CancellableJobHandler + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         loop {

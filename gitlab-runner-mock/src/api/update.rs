@@ -37,7 +37,7 @@ impl Respond for JobUpdateResponder {
             if r.token != job.token() {
                 ResponseTemplate::new(403)
             } else {
-                match (job.state(), r.state) {
+                let r = match (job.state(), r.state) {
                     (MockJobState::Running, MockJobState::Success) => {
                         job.update_state(r.state);
                         ResponseTemplate::new(200)
@@ -50,8 +50,13 @@ impl Respond for JobUpdateResponder {
                         job.update_state(r.state);
                         ResponseTemplate::new(200)
                     }
+                    (current_state, _) if current_state != MockJobState::Running => {
+                        ResponseTemplate::new(403)
+                    }
                     _ => panic!("Invalid state change"),
-                }
+                };
+
+                r.append_header("Job-Status", &*job.state().to_string())
             }
         } else {
             ResponseTemplate::new(404)
