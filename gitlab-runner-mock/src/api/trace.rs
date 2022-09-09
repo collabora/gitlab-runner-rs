@@ -1,7 +1,7 @@
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
 
-use crate::GitlabRunnerMock;
+use crate::{GitlabRunnerMock, MockJobState};
 
 pub(crate) struct JobTraceResponder {
     mock: GitlabRunnerMock,
@@ -43,12 +43,16 @@ impl Respond for JobTraceResponder {
         if let Some(job) = self.mock.get_job(id) {
             if token != job.token() {
                 ResponseTemplate::new(403)
+            } else if job.state() != MockJobState::Running {
+                ResponseTemplate::new(403).insert_header("Job-Status", &*job.state().to_string())
             } else {
                 match job.append_log(request.body.clone(), start, end) {
-                    Ok(()) => ResponseTemplate::new(202).insert_header(
-                        "X-GitLab-Trace-Update-Interval",
-                        &*self.mock.update_interval().to_string(),
-                    ),
+                    Ok(()) => ResponseTemplate::new(202)
+                        .insert_header(
+                            "X-GitLab-Trace-Update-Interval",
+                            &*self.mock.update_interval().to_string(),
+                        )
+                        .insert_header("Job-Status", &*job.state().to_string()),
                     Err(e) => ResponseTemplate::new(416).set_body_string(format!("{:?}", e)),
                 }
             }
