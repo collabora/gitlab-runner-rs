@@ -4,6 +4,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -189,6 +190,25 @@ impl JobResponse {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum JobStatus {
+    Success,
+    Canceled,
+    Running,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct JobInfoResponse {
+    pub id: u64,
+    pub name: String,
+    pub status: JobStatus,
+    #[serde(flatten)]
+    unparsed: JsonValue,
+}
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Unexpected reply code {0}")]
@@ -245,6 +265,41 @@ impl Client {
             StatusCode::CREATED => Ok(Some(r.json().await?)),
             StatusCode::NO_CONTENT => Ok(None),
             _ => Err(Error::UnexpectedStatus(r.status())),
+        }
+    }
+
+    async fn query_job(&self, _job_id: u64, token: &str) -> Result<JobInfoResponse, Error> {
+        let mut url = self.url.clone();
+        url.path_segments_mut()
+            .unwrap()
+            .extend(&["api", "v4", "job"]);
+
+        let r = self
+            .client
+            .get(url)
+            .header("JOB-TOKEN", token)
+            .send()
+            .await?;
+
+        match r.status() {
+            StatusCode::OK => Ok(r.json().await?),
+            _ => Err(Error::UnexpectedStatus(r.status())),
+        }
+    }
+
+    pub async fn check_for_cancel(&self, job_id: u64, token: &str) -> Result<bool, Error> {
+        match self.query_job(job_id, token).await {
+            Ok(response) => Ok(response.status == JobStatus::Canceled),
+            Err(Error::UnexpectedStatus(status)) => {
+                if status == StatusCode::UNAUTHORIZED {
+                    // If our job token is forbidden, it has expired, which means
+                    // the job has been cancelled.
+                    Ok(true)
+                } else {
+                    Err(Error::UnexpectedStatus(status))
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -382,6 +437,90 @@ impl Client {
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
+}
+
+#[derive(Debug)]
+struct CancelerCore {
+    clients: usize,
+    canceled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Canceler {
+    core: Arc<Mutex<CancelerCore>>,
+}
+
+impl Canceler {
+    fn new(core: Arc<Mutex<CancelerCore>>) -> Self {
+        Self { core }
+    }
+
+    pub fn cancel(&self) {
+        let mut g = self.core.lock().unwrap();
+        g.canceled = true
+    }
+
+    pub fn is_active(&self) -> bool {
+        let g = self.core.lock().unwrap();
+        g.clients > 0usize
+    }
+}
+
+/// Reports whether a job has been cancelled
+///
+/// The runner periodically polls Gitlab to determine whether the
+/// current job has been canceled. You can use this object to check
+/// cheaply whether that has occurred. You will not be able to pass
+/// further data to a cancelled Gitlab job.
+#[derive(Debug)]
+pub struct CancelClient {
+    core: Arc<Mutex<CancelerCore>>,
+}
+
+impl CancelClient {
+    fn new(core: Arc<Mutex<CancelerCore>>) -> Self {
+        Self { core }
+    }
+
+    /// Check for cancellation
+    ///
+    /// This returns true if background polling has determined that
+    /// the job has already been cancelled in Gitlab.
+    pub fn is_canceled(&self) -> bool {
+        let g = self.core.lock().unwrap();
+        g.canceled
+    }
+}
+
+impl Clone for CancelClient {
+    fn clone(&self) -> Self {
+        {
+            let mut g = self.core.lock().unwrap();
+            g.clients += 1;
+        }
+        Self::new(self.core.clone())
+    }
+}
+
+impl Drop for CancelClient {
+    fn drop(&mut self) {
+        let mut g = self.core.lock().unwrap();
+        g.clients -= 1;
+    }
+}
+
+/// Make a [Canceler]/[CancelClient] pair.
+///
+/// The [Canceler] can be used to update the stored cancel status,
+/// while the [CancelClient] can be passed to [JobHandler]
+/// implementations to support cancellation.
+pub(crate) fn make_canceler() -> (Canceler, CancelClient) {
+    let core = Arc::new(Mutex::new(CancelerCore {
+        clients: 1,
+        canceled: false,
+    }));
+
+    (Canceler::new(core.clone()), CancelClient::new(core))
 }
 
 #[cfg(test)]

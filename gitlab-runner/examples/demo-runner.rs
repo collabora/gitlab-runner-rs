@@ -3,7 +3,7 @@ use std::io::Read;
 use futures::AsyncWriteExt;
 use gitlab_runner::job::Job;
 use gitlab_runner::uploader::Uploader;
-use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, CancelClient, JobHandler, JobResult, Phase, Runner};
 use serde::Deserialize;
 use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
@@ -133,7 +133,7 @@ impl Run {
 
 #[async_trait::async_trait]
 impl JobHandler for Run {
-    async fn step(&mut self, script: &[String], _phase: Phase) -> JobResult {
+    async fn step(&mut self, script: &[String], _phase: Phase, _cancel: CancelClient) -> JobResult {
         for command in script {
             self.command(command).await?;
         }

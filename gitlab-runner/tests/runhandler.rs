@@ -3,7 +3,7 @@ use std::pin::Pin;
 // Test the interaction intervals with the backend as driver by the runhandler
 //
 use gitlab_runner::job::Job;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{CancelClient, JobHandler, JobResult, Phase, Runner};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJob, MockJobState};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -80,7 +80,12 @@ impl Logger {
 
 #[async_trait::async_trait]
 impl JobHandler for Logger {
-    async fn step(&mut self, _script: &[String], _phase: Phase) -> JobResult {
+    async fn step(
+        &mut self,
+        _script: &[String],
+        _phase: Phase,
+        _cancel: CancelClient,
+    ) -> JobResult {
         while let Some(command) = self.rx.recv().await {
             match command {
                 Control::Log(s, tx) => {

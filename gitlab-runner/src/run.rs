@@ -7,11 +7,25 @@ use tracing::instrument::WithSubscriber;
 use tracing::warn;
 use tracing::Instrument;
 
-use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
+use crate::client::{
+    make_canceler, ArtifactWhen, CancelClient, Canceler, Client, JobResponse, JobState,
+};
 use crate::job::{Job, JobData};
 use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
 use crate::{JobHandler, JobResult, Phase};
+
+fn start_cancel_checker(job: u64, token: String, client: Client, canceler: Canceler) {
+    tokio::spawn(async move {
+        while canceler.is_active() {
+            if let Ok(true) = client.check_for_cancel(job, &token).await {
+                canceler.cancel();
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
+}
 
 async fn run<F, J, Ret>(
     job: Job,
@@ -19,6 +33,7 @@ async fn run<F, J, Ret>(
     response: Arc<JobResponse>,
     process: F,
     build_dir: PathBuf,
+    cancel_client: CancelClient,
 ) -> JobResult
 where
     F: FnOnce(Job) -> Ret,
@@ -33,34 +48,42 @@ where
 
     let script = response.step(Phase::Script).ok_or(())?;
     // TODO handle timeout
-    let script_result = handler.step(&script.script, Phase::Script).await;
+    let script_result = handler
+        .step(&script.script, Phase::Script, cancel_client.clone())
+        .await;
 
     if let Some(after) = response.step(Phase::AfterScript) {
         /* gitlab ignores the after_script result; so do the same */
-        let _ = handler.step(&after.script, Phase::AfterScript).await;
+        let _ = handler
+            .step(&after.script, Phase::AfterScript, cancel_client.clone())
+            .await;
     }
 
-    //let upload = match response.
-    let upload = response.artifacts.get(0).map_or(false, |a| match a.when {
-        ArtifactWhen::Always => true,
-        ArtifactWhen::OnSuccess => script_result.is_ok(),
-        ArtifactWhen::OnFailure => script_result.is_err(),
-    });
+    let r = if cancel_client.is_canceled() {
+        script_result
+    } else {
+        //let upload = match response.
+        let upload = response.artifacts.get(0).map_or(false, |a| match a.when {
+            ArtifactWhen::Always => true,
+            ArtifactWhen::OnSuccess => script_result.is_ok(),
+            ArtifactWhen::OnFailure => script_result.is_err(),
+        });
 
-    let r = if upload {
-        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
-            let r = handler.upload_artifacts(&mut uploader).await;
-            if r.is_ok() {
-                uploader.upload().await.and(script_result)
+        if upload {
+            if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
+                let r = handler.upload_artifacts(&mut uploader).await;
+                if r.is_ok() {
+                    uploader.upload().await.and(script_result)
+                } else {
+                    r
+                }
             } else {
-                r
+                warn!("Failed to create uploader");
+                Err(())
             }
         } else {
-            warn!("Failed to create uploader");
-            Err(())
+            script_result
         }
-    } else {
-        script_result
     };
 
     handler.cleanup().await;
@@ -147,6 +170,16 @@ impl Run {
             build_dir.clone(),
             self.jobdata.clone(),
         );
+
+        let (canceler, cancel_client) = make_canceler();
+        start_cancel_checker(
+            self.response.id,
+            self.response.token.clone(),
+            self.client.clone(),
+            canceler,
+        );
+
+        let c2 = cancel_client.clone();
         let join = tokio::spawn(
             run(
                 job,
@@ -154,15 +187,21 @@ impl Run {
                 self.response.clone(),
                 process,
                 build_dir,
+                c2,
             )
             .in_current_span()
             .with_current_subscriber(),
         );
         tokio::pin!(join);
 
+        let c2 = cancel_client.clone();
         let result = loop {
             tokio::select! {
                 _ = self.interval.tick() => {
+                    if c2.is_canceled() {
+                        // Cannot update a canceled job
+                        continue;
+                    }
                     // Compare against *now* rather then the tick returned instant as that is the
                     // deadline which might have been missed; especially when testing.
                     let now = Instant::now();
@@ -194,6 +233,8 @@ impl Run {
             Ok(Err(_)) => JobState::Failed,
             Err(_) => JobState::Failed,
         };
-        self.update(state).await.expect("Failed to update");
+        if !cancel_client.is_canceled() {
+            self.update(state).await.expect("Failed to update");
+        }
     }
 }

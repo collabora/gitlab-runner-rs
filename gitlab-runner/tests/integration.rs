@@ -1,6 +1,6 @@
 use futures::future;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, CancelClient, JobHandler, JobResult, Phase, Runner};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
@@ -32,7 +32,7 @@ impl<S> JobHandler for SimpleRun<S>
 where
     S: Future<Output = JobResult> + Send,
 {
-    async fn step(&mut self, _steps: &[String], _phase: Phase) -> JobResult {
+    async fn step(&mut self, _steps: &[String], _phase: Phase, _cancel: CancelClient) -> JobResult {
         self.step.take().expect("Can't handle multiple steps").await
     }
 }
@@ -57,7 +57,7 @@ where
     S: Fn(&[String]) -> R + Send + Sync,
     R: Future<Output = JobResult> + Send,
 {
-    async fn step(&mut self, steps: &[String], _phase: Phase) -> JobResult {
+    async fn step(&mut self, steps: &[String], _phase: Phase, _cancel: CancelClient) -> JobResult {
         (self.steps)(steps).await
     }
 }
@@ -74,7 +74,7 @@ struct TestRun<T> {
 
 #[async_trait::async_trait]
 impl<T: Send> JobHandler for TestRun<T> {
-    async fn step(&mut self, _steps: &[String], _phase: Phase) -> JobResult {
+    async fn step(&mut self, _steps: &[String], _phase: Phase, _cancel: CancelClient) -> JobResult {
         self.start.take().expect("restarted?").await.unwrap();
         if let Some(delay) = self.delay {
             sleep(delay).await;

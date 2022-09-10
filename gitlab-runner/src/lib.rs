@@ -12,7 +12,7 @@
 //! runner can be implement as such:
 //!
 //! ```rust,no_run
-//! use gitlab_runner::{outputln, Runner, JobHandler, JobResult, Phase};
+//! use gitlab_runner::{outputln, CancelClient, Runner, JobHandler, JobResult, Phase};
 //! use std::path::PathBuf;
 //!
 //! #[derive(Debug)]
@@ -20,7 +20,7 @@
 //!
 //! #[async_trait::async_trait]
 //! impl JobHandler for Run {
-//!       async fn step(&mut self, script: &[String], phase: Phase) -> JobResult {
+//!       async fn step(&mut self, script: &[String], phase: Phase, _cancel: CancelClient) -> JobResult {
 //!           outputln!("Running script for phase {:?}", phase);
 //!           for s in script {
 //!             outputln!("Step: {}", s);
@@ -103,7 +103,7 @@ macro_rules! outputln {
 
 /// Result type for various stagings of a jobs
 pub type JobResult = Result<(), ()>;
-pub use client::Phase;
+pub use client::{CancelClient, Phase};
 
 /// Async trait for handling a single Job
 ///
@@ -118,7 +118,7 @@ pub trait JobHandler: Send {
     ///
     /// Note that gitlab concatinates the `before_script` and `script` arrays into a single
     /// [Phase::Script] step
-    async fn step(&mut self, script: &[String], phase: Phase) -> JobResult;
+    async fn step(&mut self, script: &[String], phase: Phase, cancel: CancelClient) -> JobResult;
     /// Upload artifacts to gitlab
     ///
     /// This gets called depending on whether the job definition calls for artifacts to be uploaded

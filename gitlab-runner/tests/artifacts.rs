@@ -3,14 +3,19 @@ use std::io::Read;
 use futures::AsyncWriteExt;
 use gitlab_runner::job::Job;
 use gitlab_runner::uploader::Uploader;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{CancelClient, JobHandler, JobResult, Phase, Runner};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJobState, MockJobStepName, MockJobStepWhen};
 
 struct Upload();
 
 #[async_trait::async_trait]
 impl JobHandler for Upload {
-    async fn step(&mut self, _script: &[String], _phase: Phase) -> JobResult {
+    async fn step(
+        &mut self,
+        _script: &[String],
+        _phase: Phase,
+        _cancel: CancelClient,
+    ) -> JobResult {
         Ok(())
     }
 
@@ -71,7 +76,12 @@ impl Download {
 
 #[async_trait::async_trait]
 impl JobHandler for Download {
-    async fn step(&mut self, _script: &[String], _phase: Phase) -> JobResult {
+    async fn step(
+        &mut self,
+        _script: &[String],
+        _phase: Phase,
+        _cancel: CancelClient,
+    ) -> JobResult {
         Ok(())
     }
 }
