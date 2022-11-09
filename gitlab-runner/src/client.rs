@@ -4,6 +4,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::ops::Not;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -22,9 +23,54 @@ where
 const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
 const JOB_STATUS: &str = "Job-Status";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 struct FeaturesInfo {
+    #[serde(skip_serializing_if = "Not::not")]
+    variables: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    image: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    services: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    artifacts: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    cache: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    shared: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    upload_multiple_artifacts: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    upload_raw_artifacts: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    session: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    terminal: bool,
+    #[serde(skip_serializing_if = "Not::not")]
     refspecs: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    masking: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    proxy: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    raw_variables: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    artifacts_exclude: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    multi_build_steps: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    trace_reset: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    trace_checksum: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    trace_size: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    vault_secrets: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    cancelable: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    return_exit_code: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    service_variables: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -227,7 +273,10 @@ impl Client {
             token: &self.token,
             info: VersionInfo {
                 // Setting `refspecs` is required to run detached MR pipelines.
-                features: FeaturesInfo { refspecs: true },
+                features: FeaturesInfo {
+                    refspecs: true,
+                    ..Default::default()
+                },
             },
         };
 
