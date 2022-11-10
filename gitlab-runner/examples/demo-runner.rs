@@ -1,9 +1,10 @@
+use std::borrow::Cow;
 use std::io::Read;
 
-use futures::AsyncWriteExt;
+use futures::io::Cursor;
+use futures::AsyncRead;
 use gitlab_runner::job::Job;
-use gitlab_runner::uploader::Uploader;
-use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner, UploadableFile};
 use serde::Deserialize;
 use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
@@ -131,8 +132,32 @@ impl Run {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum DemoFile {
+    ReadMe,
+    Fact { index: usize, value: String },
+}
+
+impl UploadableFile for DemoFile {
+    type Data<'a> = Box<dyn AsyncRead + Send + Unpin>;
+
+    fn get_path(&self) -> Cow<'_, str> {
+        match self {
+            Self::ReadMe => "README.md".into(),
+            Self::Fact { index, .. } => format!("fact_{}.txt", index).into(),
+        }
+    }
+
+    fn get_data(&self) -> Box<dyn AsyncRead + Send + Unpin> {
+        match self {
+            DemoFile::ReadMe => Box::new(b"Demo runner artifact\n".as_slice()),
+            DemoFile::Fact { value, .. } => Box::new(Cursor::new(value.clone().into_bytes())),
+        }
+    }
+}
+
 #[async_trait::async_trait]
-impl JobHandler for Run {
+impl JobHandler<DemoFile> for Run {
     async fn step(&mut self, script: &[String], _phase: Phase) -> JobResult {
         for command in script {
             self.command(command).await?;
@@ -141,19 +166,17 @@ impl JobHandler for Run {
         Ok(())
     }
 
-    async fn upload_artifacts(&mut self, upload: &mut Uploader) -> JobResult {
-        let mut file = upload.file("README.md".to_string()).await;
-        file.write_all(b"Demo runner artifact\n")
-            .await
-            .expect("Failed to write README");
-        drop(file);
+    async fn get_uploadable_files(
+        &mut self,
+    ) -> Result<Box<dyn Iterator<Item = DemoFile> + Send>, ()> {
+        let mut res = vec![DemoFile::ReadMe];
         for (i, f) in self.facts.iter().enumerate() {
-            let mut file = upload.file(format!("fact_{}.txt", i)).await;
-            file.write_all(f.as_bytes())
-                .await
-                .expect("Failed to write fact");
+            res.push(DemoFile::Fact {
+                index: i,
+                value: f.clone(),
+            });
         }
-        Ok(())
+        Ok(Box::new(res.into_iter()))
     }
 
     async fn cleanup(&mut self) {

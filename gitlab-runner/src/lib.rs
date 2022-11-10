@@ -76,11 +76,13 @@ pub mod uploader;
 pub use logging::GitlabLayer;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
+pub use uploader::UploadFile;
 mod runlist;
 use crate::runlist::RunList;
-use uploader::Uploader;
 
 use futures::prelude::*;
+use futures::AsyncRead;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -106,6 +108,52 @@ macro_rules! outputln {
 pub type JobResult = Result<(), ()>;
 pub use client::Phase;
 
+/// A file that a [`JobHandler`] is willing to upload to the server
+///
+/// A [`JobHandler`] will be queried for the set of files it is able
+/// to upload to the server. These might be on disk, or they might be
+/// generated or downloaded from some other source on demand. The
+/// `get_path` method is required so that the globbing Gitlab expects
+/// can be performed without the handler needing to be involved.
+pub trait UploadableFile: Eq {
+    /// The type of the data stream returned by
+    /// [`get_data`](Self::get_data)
+    type Data<'a>: AsyncRead + Send + Unpin
+    where
+        Self: 'a;
+
+    /// Get the logical path of the file.
+    ///
+    /// This is the path on disk from the root of the checkout for
+    /// Gitlab's own runner. It should match the paths that users are
+    /// expected to specify when requesting artifacts in their jobs.
+    fn get_path(&self) -> Cow<'_, str>;
+
+    /// Get something that can provide the data for this file.
+    ///
+    /// This can be any implementor of [`AsyncRead`].
+    fn get_data(&self) -> Self::Data<'_>;
+}
+
+/// An [`UploadableFile`] type for JobHandlers that expose no files.
+///
+/// This will panic on attempting to actually pass it to the crate,
+/// but if you don't want or need to return artifacts to Gitlab it
+/// provides a sensible default.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoFiles {}
+
+impl UploadableFile for NoFiles {
+    type Data<'a> = &'a [u8];
+
+    fn get_path(&self) -> Cow<'_, str> {
+        unreachable!("tried to get path of NoFiles")
+    }
+    fn get_data(&self) -> Self::Data<'_> {
+        unreachable!("tried to read data from NoFiles");
+    }
+}
+
 /// Async trait for handling a single Job that handles its own cancellation
 ///
 /// This trait is largely identical to [`JobHandler`], but its methods explicitly take a
@@ -117,7 +165,10 @@ pub use client::Phase;
 /// Note that this is an asynchronous trait which should be implemented by using the [`async_trait`]
 /// crate. However this also means the rustdoc documentation is interesting...
 #[async_trait::async_trait]
-pub trait CancellableJobHandler: Send {
+pub trait CancellableJobHandler<U = NoFiles>: Send
+where
+    U: UploadableFile + Send + 'static,
+{
     /// Do a single step of a job
     ///
     /// This gets called for each phase of the job (e.g. script and after_script). The passed
@@ -132,14 +183,14 @@ pub trait CancellableJobHandler: Send {
         phase: Phase,
         cancel_token: &CancellationToken,
     ) -> JobResult;
-    /// Upload artifacts to gitlab
+
+    /// Get a list of the files available to upload
     ///
-    /// This gets called depending on whether the job definition calls for artifacts to be uploaded
-    /// based on the result of the script run. If the job is cancelled while this is running, it
-    /// will still be run to completion. If the job was already cancelled, this will not be called.
-    async fn upload_artifacts(&mut self, _uploader: &mut Uploader) -> JobResult {
-        Ok(())
+    /// See the description [`UploadableFile`] for more information.
+    async fn get_uploadable_files(&mut self) -> Result<Box<dyn Iterator<Item = U> + Send>, ()> {
+        Ok(Box::new(core::iter::empty()))
     }
+
     /// Cleanup after the job is finished
     ///
     /// This method always get called whether or not the job succeeded or was acancelled, allowing
@@ -157,7 +208,10 @@ pub trait CancellableJobHandler: Send {
 /// Note that this is an asynchronous trait which should be implemented by using the [`async_trait`]
 /// crate. However this also means the rustdoc documentation is interesting...
 #[async_trait::async_trait]
-pub trait JobHandler: Send {
+pub trait JobHandler<U = NoFiles>: Send
+where
+    U: UploadableFile + Send + 'static,
+{
     /// Do a single step of a job
     ///
     /// This gets called for each phase of the job (e.g. script and after_script). The passed
@@ -168,14 +222,14 @@ pub trait JobHandler: Send {
     /// Note that gitlab concatinates the `before_script` and `script` arrays into a single
     /// [Phase::Script] step
     async fn step(&mut self, script: &[String], phase: Phase) -> JobResult;
-    /// Upload artifacts to gitlab
+
+    /// Get a list of the files available to upload
     ///
-    /// This gets called depending on whether the job definition calls for artifacts to be uploaded
-    /// based on the result of the script run. If the job is cancelled while this is running, it
-    /// will still be run to completion. If the job was already cancelled, this will not be called.
-    async fn upload_artifacts(&mut self, _uploader: &mut Uploader) -> JobResult {
-        Ok(())
+    /// See the description [`UploadableFile`] for more information.
+    async fn get_uploadable_files(&mut self) -> Result<Box<dyn Iterator<Item = U> + Send>, ()> {
+        Ok(Box::new(core::iter::empty()))
     }
+
     /// Cleanup after the job is finished
     ///
     /// This method always get called whether or not the job succeeded or was cancelled, allowing
@@ -184,9 +238,10 @@ pub trait JobHandler: Send {
 }
 
 #[async_trait::async_trait]
-impl<J> CancellableJobHandler for J
+impl<J, U> CancellableJobHandler<U> for J
 where
-    J: JobHandler,
+    J: JobHandler<U>,
+    U: UploadableFile + Send + 'static,
 {
     async fn step(
         &mut self,
@@ -200,8 +255,8 @@ where
         }
     }
 
-    async fn upload_artifacts(&mut self, uploader: &mut Uploader) -> JobResult {
-        self.upload_artifacts(uploader).await
+    async fn get_uploadable_files(&mut self) -> Result<Box<dyn Iterator<Item = U> + Send>, ()> {
+        self.get_uploadable_files().await
     }
 
     async fn cleanup(&mut self) {
@@ -289,10 +344,11 @@ impl Runner {
     ///
     /// Note that this function is not cancel save. If the future gets cancelled gitlab might have
     /// provided a job for which processing didn't start yet.
-    pub async fn request_job<F, J, Ret>(&mut self, process: F) -> Result<bool, client::Error>
+    pub async fn request_job<F, J, U, Ret>(&mut self, process: F) -> Result<bool, client::Error>
     where
         F: FnOnce(Job) -> Ret + Sync + Send + 'static,
-        J: CancellableJobHandler + Send + 'static,
+        J: CancellableJobHandler<U> + Send + 'static,
+        U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         let response = self.client.request_job().await?;
@@ -323,10 +379,15 @@ impl Runner {
     ///
     /// This essentially calls [`Runner::request_job`] requesting jobs until at most `maximum` jobs are
     /// running in parallel.
-    pub async fn run<F, J, Ret>(&mut self, process: F, maximum: usize) -> Result<(), client::Error>
+    pub async fn run<F, U, J, Ret>(
+        &mut self,
+        process: F,
+        maximum: usize,
+    ) -> Result<(), client::Error>
     where
         F: Fn(Job) -> Ret + Sync + Send + 'static + Clone,
-        J: CancellableJobHandler + Send + 'static,
+        J: CancellableJobHandler<U> + Send + 'static,
+        U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         loop {
