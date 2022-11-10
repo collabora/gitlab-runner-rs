@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
@@ -8,14 +8,14 @@ use tracing::instrument::WithSubscriber;
 use tracing::warn;
 use tracing::Instrument;
 
-use crate::client::{ArtifactWhen, Client, JobResponse, JobState};
+use crate::client::{ArtifactWhen, Client, JobArtifact, JobResponse, JobState};
 use crate::job::{Job, JobLog};
 use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
-use crate::CancellableJobHandler;
+use crate::{CancellableJobHandler, UploadableFile};
 use crate::{JobResult, Phase};
 
-async fn run<F, J, Ret>(
+async fn run<F, J, U, Ret>(
     job: Job,
     client: Client,
     response: Arc<JobResponse>,
@@ -25,7 +25,8 @@ async fn run<F, J, Ret>(
 ) -> JobResult
 where
     F: FnOnce(Job) -> Ret,
-    J: CancellableJobHandler,
+    J: CancellableJobHandler<U>,
+    U: UploadableFile + Send + 'static,
     Ret: Future<Output = Result<J, ()>>,
 {
     if let Err(e) = tokio::fs::create_dir(&build_dir).await {
@@ -54,28 +55,26 @@ where
         Ok(())
     };
 
-    let upload = !cancel_token.is_cancelled()
-        && response.artifacts.get(0).map_or(false, |a| match a.when {
-            ArtifactWhen::Always => true,
-            ArtifactWhen::OnSuccess => script_result.is_ok(),
-            ArtifactWhen::OnFailure => script_result.is_err(),
-        });
+    let mut overall_result = script_result;
 
-    let r = if upload {
-        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
-            let r = handler.upload_artifacts(&mut uploader).await;
-            if r.is_ok() {
-                uploader.upload().await.and(script_result)
-            } else {
-                r
+    if !cancel_token.is_cancelled() {
+        for artifact in response.artifacts.iter().take(1) {
+            if process_artifact(
+                artifact,
+                script_result,
+                client.clone(),
+                build_dir.as_ref(),
+                response.as_ref(),
+                &mut handler,
+            )
+            .await
+            .is_err()
+            {
+                overall_result = Err(());
+                break;
             }
-        } else {
-            warn!("Failed to create uploader");
-            Err(())
         }
-    } else {
-        script_result
-    };
+    }
 
     handler.cleanup().await;
 
@@ -83,7 +82,80 @@ where
         warn!("Failed to remove build dir: {}", e);
     }
 
-    r
+    overall_result
+}
+
+async fn process_artifact<J, U>(
+    artifact: &JobArtifact,
+    script_result: JobResult,
+    client: Client,
+    build_dir: &Path,
+    response: &JobResponse,
+    handler: &mut J,
+) -> JobResult
+where
+    J: CancellableJobHandler<U>,
+    U: UploadableFile + Send + 'static,
+{
+    let upload = match artifact.when {
+        ArtifactWhen::Always => true,
+        ArtifactWhen::OnSuccess => script_result.is_ok(),
+        ArtifactWhen::OnFailure => script_result.is_err(),
+    };
+
+    if !upload {
+        return Ok(());
+    }
+
+    let mut uploader = match Uploader::new(client, build_dir, response.clone()) {
+        Ok(uploader) => uploader,
+        Err(_) => {
+            warn!("Failed to create uploader");
+            return Err(());
+        }
+    };
+
+    let mut uploaded = 0;
+
+    for file in handler.get_uploadable_files().await? {
+        if artifact
+            .paths
+            .iter()
+            .any(|path| match glob::Pattern::new(path) {
+                Ok(pattern) => pattern.matches(&file.get_path()),
+                Err(_) => path == &file.get_path(),
+            })
+        {
+            let path = file.get_path();
+            match uploader.file(path.to_string()).await {
+                Ok(mut upload) => {
+                    let mut data = file.get_data();
+                    match futures::io::copy(&mut data, &mut upload).await {
+                        Ok(_) => {
+                            uploaded += 1;
+                        }
+                        Err(e) => {
+                            warn!("Failed to upload file: {:?}", e);
+                            return Err(());
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to begin new file upload: {:?}", e);
+                    return Err(());
+                }
+            }
+        }
+    }
+
+    if uploaded > 0 {
+        if let Err(e) = uploader.upload().await {
+            warn!("Failed to upload artifact: {:?}", e);
+            return Err(());
+        }
+    }
+
+    Ok(())
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
@@ -170,10 +242,11 @@ impl Run {
     }
 
     #[tracing::instrument(skip(self, process,build_dir),fields(gitlab.job=self.response.id))]
-    pub(crate) async fn run<F, J, Ret>(&mut self, process: F, build_dir: PathBuf)
+    pub(crate) async fn run<F, J, U, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,
-        J: CancellableJobHandler + 'static,
+        J: CancellableJobHandler<U> + 'static,
+        U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
         let cancel_token = CancellationToken::new();

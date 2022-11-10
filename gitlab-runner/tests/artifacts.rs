@@ -1,30 +1,46 @@
+use std::borrow::Cow;
 use std::io::Read;
 
-use futures::AsyncWriteExt;
 use gitlab_runner::job::Job;
-use gitlab_runner::uploader::Uploader;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{JobHandler, JobResult, Phase, Runner, UploadableFile};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJobState, MockJobStepName, MockJobStepWhen};
+
+#[derive(PartialEq, Eq)]
+enum TestFile {
+    Test,
+    Test2,
+}
+
+#[async_trait::async_trait]
+impl UploadableFile for TestFile {
+    type Data<'a> = &'a [u8];
+
+    fn get_path(&self) -> Cow<'_, str> {
+        match self {
+            TestFile::Test => "test".into(),
+            TestFile::Test2 => "test2".into(),
+        }
+    }
+    fn get_data(&self) -> &'_ [u8] {
+        match self {
+            TestFile::Test => b"testdata".as_slice(),
+            TestFile::Test2 => b"testdata2".as_slice(),
+        }
+    }
+}
 
 struct Upload();
 
 #[async_trait::async_trait]
-impl JobHandler for Upload {
+impl JobHandler<TestFile> for Upload {
     async fn step(&mut self, _script: &[String], _phase: Phase) -> JobResult {
         Ok(())
     }
 
-    async fn upload_artifacts(&mut self, uploader: &mut Uploader) -> JobResult {
-        let mut f = uploader.file("test".to_string()).await;
-        f.write_all(b"testdata")
-            .await
-            .expect("Couldn't write test data");
-        drop(f);
-        let mut f = uploader.file("test2".to_string()).await;
-        f.write_all(b"testdata2")
-            .await
-            .expect("Couldn't write test data");
-        Ok(())
+    async fn get_uploadable_files(
+        &mut self,
+    ) -> Result<Box<dyn Iterator<Item = TestFile> + Send>, ()> {
+        Ok(Box::new([TestFile::Test, TestFile::Test2].into_iter()))
     }
 }
 
