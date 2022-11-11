@@ -4,8 +4,8 @@ use std::future::Future;
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::pin::Pin;
+use std::task::Poll;
 use std::thread;
-use std::{sync::Arc, task::Poll};
 
 use futures::{future::BoxFuture, AsyncWrite, FutureExt};
 use reqwest::Body;
@@ -13,10 +13,10 @@ use tokio::fs::File as AsyncFile;
 use tokio::sync::mpsc::{self, error::SendError};
 use tokio::sync::oneshot;
 use tokio_util::io::ReaderStream;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
-    client::{Client, JobResponse},
+    client::{ArtifactFormat, Client, JobArtifact},
     JobResult,
 };
 
@@ -125,7 +125,8 @@ impl<'a> AsyncWrite for UploadFile<'a> {
 /// An upload to gitlab
 pub struct Uploader {
     client: Client,
-    data: Arc<JobResponse>,
+    job_id: u64,
+    job_token: String,
     tx: mpsc::Sender<UploadRequest>,
 }
 
@@ -133,14 +134,33 @@ impl Uploader {
     pub(crate) fn new(
         client: Client,
         build_dir: &Path,
-        data: Arc<JobResponse>,
+        job_id: u64,
+        job_token: String,
+        artifact: &JobArtifact,
     ) -> Result<Self, ()> {
         let temp = tempfile::tempfile_in(build_dir)
             .map_err(|e| warn!("Failed to create artifacts temp file: {:?}", e))?;
 
         let (tx, rx) = mpsc::channel(2);
-        thread::spawn(move || zip_thread(temp, rx));
-        Ok(Self { client, data, tx })
+        match artifact.artifact_format {
+            ArtifactFormat::Zip => {
+                thread::spawn(move || zip_thread(temp, rx));
+            }
+            ArtifactFormat::Gzip => {
+                error!("Gzip artifacts are currently unsupported.");
+                return Err(());
+            }
+            ArtifactFormat::Raw => {
+                error!("Raw artifacts are currently unsupported.");
+                return Err(());
+            }
+        }
+        Ok(Self {
+            client,
+            job_id,
+            job_token,
+            tx,
+        })
     }
 
     /// Create a new file to be uploaded
@@ -186,8 +206,8 @@ impl Uploader {
         let reader = ReaderStream::new(file);
         self.client
             .upload_artifact(
-                self.data.id,
-                &self.data.token,
+                self.job_id,
+                &self.job_token,
                 "artifacts.zip",
                 Body::wrap_stream(reader),
             )

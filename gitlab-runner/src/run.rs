@@ -107,7 +107,13 @@ where
         return Ok(());
     }
 
-    let mut uploader = match Uploader::new(client, build_dir, response.clone()) {
+    let mut uploader = match Uploader::new(
+        client,
+        build_dir,
+        response.id,
+        response.token.clone(),
+        artifact,
+    ) {
         Ok(uploader) => uploader,
         Err(_) => {
             warn!("Failed to create uploader");
