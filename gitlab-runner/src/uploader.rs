@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::thread;
 
+use flate2::{Compression, GzBuilder};
 use futures::{future::BoxFuture, AsyncWrite, FutureExt};
 use reqwest::Body;
 use tokio::fs::File as AsyncFile;
@@ -60,6 +61,66 @@ fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
                         Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                     };
                     tx.send(reply).expect("Couldn't send finished zip");
+                    return;
+                }
+            }
+        } else {
+            return;
+        }
+    }
+}
+
+fn gzip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
+    let mut gz = match rx.blocking_recv() {
+        Some(UploadRequest::NewFile(s, tx)) => {
+            tx.send(Ok(())).expect("Couldn't send reply");
+            GzBuilder::new()
+                .filename(s)
+                .write(&mut temp, Compression::default())
+        }
+        Some(UploadRequest::WriteData(_, tx)) => {
+            tx.send(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "no file open",
+            )))
+            .expect("Couldn't send reply");
+            return;
+        }
+        Some(UploadRequest::Finish(tx)) => {
+            tx.send(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "no file open",
+            )))
+            .expect("Couldn't send reply");
+            return;
+        }
+        None => {
+            return;
+        }
+    };
+
+    loop {
+        if let Some(request) = rx.blocking_recv() {
+            match request {
+                UploadRequest::NewFile(_, tx) => {
+                    tx.send(Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "multiple files not permitted in gzip",
+                    )))
+                    .expect("Couldn't send reply");
+                    return;
+                }
+                UploadRequest::WriteData(v, tx) => {
+                    let r = gz.write(&v);
+                    tx.send(r.and(Ok(()))).expect("Couldn't send reply");
+                }
+                UploadRequest::Finish(tx) => {
+                    let r = gz.finish();
+                    let reply = match r {
+                        Ok(_) => temp.rewind().map(|()| temp),
+                        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                    };
+                    tx.send(reply).expect("Couldn't send finished gzip");
                     return;
                 }
             }
@@ -147,8 +208,7 @@ impl Uploader {
                 thread::spawn(move || zip_thread(temp, rx));
             }
             ArtifactFormat::Gzip => {
-                error!("Gzip artifacts are currently unsupported.");
-                return Err(());
+                thread::spawn(move || gzip_thread(temp, rx));
             }
             ArtifactFormat::Raw => {
                 error!("Raw artifacts are currently unsupported.");
