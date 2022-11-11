@@ -22,7 +22,7 @@ use crate::{
 
 #[derive(Debug)]
 enum UploadRequest {
-    NewFile(String),
+    NewFile(String, oneshot::Sender<std::io::Result<()>>),
     WriteData(Vec<u8>, oneshot::Sender<std::io::Result<()>>),
     Finish(oneshot::Sender<std::io::Result<File>>),
 }
@@ -43,8 +43,10 @@ fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
     loop {
         if let Some(request) = rx.blocking_recv() {
             match request {
-                UploadRequest::NewFile(s) => {
-                    zip.start_file(s, options).unwrap();
+                UploadRequest::NewFile(s, tx) => {
+                    let r = zip.start_file(s, options);
+                    tx.send(r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+                        .expect("Couldn't send reply");
                 }
                 UploadRequest::WriteData(v, tx) => {
                     let r = zip.write(&v);
@@ -142,15 +144,28 @@ impl Uploader {
     }
 
     /// Create a new file to be uploaded
-    pub async fn file(&mut self, name: String) -> UploadFile<'_> {
+    pub(crate) async fn file(&mut self, name: String) -> Result<UploadFile<'_>, ()> {
+        let (tx, rx) = oneshot::channel();
         self.tx
-            .send(UploadRequest::NewFile(name))
+            .send(UploadRequest::NewFile(name, tx))
             .await
             .expect("Failed to create file");
-        UploadFile {
+        match rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => {
+                warn!("Failed to create compressed artifact file: {:?}", err);
+                Err(())
+            }
+            Err(_) => {
+                warn!("Failed to compress artifacts: thread died");
+                Err(())
+            }
+        }?;
+
+        Ok(UploadFile {
             tx: &self.tx,
             state: UploadFileState::Idle,
-        }
+        })
     }
 
     pub(crate) async fn upload(self) -> JobResult {
@@ -167,6 +182,7 @@ impl Uploader {
                 Err(())
             }
         }?);
+
         let reader = ReaderStream::new(file);
         self.client
             .upload_artifact(
