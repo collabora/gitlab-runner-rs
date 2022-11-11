@@ -58,7 +58,7 @@ where
     let mut overall_result = script_result;
 
     if !cancel_token.is_cancelled() {
-        for artifact in response.artifacts.iter().take(1) {
+        for artifact in response.artifacts.iter() {
             if process_artifact(
                 artifact,
                 script_result,

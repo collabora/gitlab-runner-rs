@@ -186,6 +186,17 @@ impl Default for ArtifactFormat {
     }
 }
 
+impl std::fmt::Display for ArtifactFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Zip => "zip",
+            Self::Gzip => "gzip",
+            Self::Raw => "raw",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct JobArtifact {
     pub name: Option<String>,
@@ -252,6 +263,13 @@ pub enum Error {
     EmptyTrace,
 }
 
+pub(crate) struct ArtifactInfo<'a> {
+    pub name: &'a str,
+    pub artifact_format: &'a str,
+    pub artifact_type: &'a str,
+    pub expire_in: Option<&'a str>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Client {
     client: reqwest::Client,
@@ -275,6 +293,7 @@ impl Client {
                 // Setting `refspecs` is required to run detached MR pipelines.
                 features: FeaturesInfo {
                     refspecs: true,
+                    upload_multiple_artifacts: true,
                     ..Default::default()
                 },
             },
@@ -418,14 +437,23 @@ impl Client {
         &self,
         id: u64,
         token: &str,
-        name: &str,
+        info: ArtifactInfo<'_>,
         data: D,
     ) -> Result<(), Error>
     where
         D: Into<Body>,
     {
-        let part = Part::stream(data).file_name(name.to_string());
-        let form = Form::new().part("file", part);
+        let part = Part::stream(data).file_name(info.name.to_string());
+        let form = Form::new()
+            .part("file", part)
+            .text("artifact_format", info.artifact_format.to_string())
+            .text("artifact_type", info.artifact_type.to_string());
+
+        let form = if let Some(expiry) = info.expire_in {
+            form.text("expire_in", expiry.to_string())
+        } else {
+            form
+        };
 
         let mut url = self.url.clone();
         let id_s = format!("{}", id);

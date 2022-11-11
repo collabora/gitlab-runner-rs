@@ -17,9 +17,11 @@ use tokio_util::io::ReaderStream;
 use tracing::{error, warn};
 
 use crate::{
-    client::{ArtifactFormat, Client, JobArtifact},
+    client::{ArtifactFormat, ArtifactInfo, Client, JobArtifact},
     JobResult,
 };
+
+const DEFAULT_ARTIFACT_NAME: &str = "default";
 
 #[derive(Debug)]
 enum UploadRequest {
@@ -183,21 +185,31 @@ impl<'a> AsyncWrite for UploadFile<'a> {
     }
 }
 
+fn make_artifact_name(base: Option<&str>, format: &ArtifactFormat) -> String {
+    let name = base.unwrap_or(DEFAULT_ARTIFACT_NAME);
+    match format {
+        ArtifactFormat::Zip => format!("{}.zip", name),
+        ArtifactFormat::Gzip => format!("{}.gz", name),
+        ArtifactFormat::Raw => unimplemented!("Raw artifacts are not supported."),
+    }
+}
+
 /// An upload to gitlab
-pub struct Uploader {
+pub struct Uploader<'a> {
     client: Client,
     job_id: u64,
     job_token: String,
+    artifact: &'a JobArtifact,
     tx: mpsc::Sender<UploadRequest>,
 }
 
-impl Uploader {
+impl<'a> Uploader<'a> {
     pub(crate) fn new(
         client: Client,
         build_dir: &Path,
         job_id: u64,
         job_token: String,
-        artifact: &JobArtifact,
+        artifact: &'a JobArtifact,
     ) -> Result<Self, ()> {
         let temp = tempfile::tempfile_in(build_dir)
             .map_err(|e| warn!("Failed to create artifacts temp file: {:?}", e))?;
@@ -219,6 +231,7 @@ impl Uploader {
             client,
             job_id,
             job_token,
+            artifact,
             tx,
         })
     }
@@ -254,11 +267,11 @@ impl Uploader {
         let file = AsyncFile::from_std(match rx.await {
             Ok(Ok(file)) => Ok(file),
             Ok(Err(err)) => {
-                warn!("Failed to zip artifacts: {:?}", err);
+                warn!("Failed to compress artifacts: {:?}", err);
                 Err(())
             }
             Err(_) => {
-                warn!("Failed to zip artifacts: thread died");
+                warn!("Failed to compress artifacts: thread died");
                 Err(())
             }
         }?);
@@ -268,7 +281,15 @@ impl Uploader {
             .upload_artifact(
                 self.job_id,
                 &self.job_token,
-                "artifacts.zip",
+                ArtifactInfo {
+                    name: &make_artifact_name(
+                        self.artifact.name.as_deref(),
+                        &self.artifact.artifact_format,
+                    ),
+                    artifact_format: &self.artifact.artifact_format.to_string(),
+                    artifact_type: &self.artifact.artifact_type,
+                    expire_in: self.artifact.expire_in.as_deref(),
+                },
                 Body::wrap_stream(reader),
             )
             .await
