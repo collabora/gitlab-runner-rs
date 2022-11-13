@@ -22,6 +22,7 @@ async fn run<F, J, Ret>(
     job: Job,
     client: Client,
     response: Arc<JobResponse>,
+    masker: Masker,
     process: F,
     build_dir: PathBuf,
     cancel_token: CancellationToken,
@@ -65,7 +66,7 @@ where
         });
 
     let r = if upload {
-        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
+        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response, masker) {
             let r = handler.upload_artifacts(&mut uploader).await;
             if r.is_ok() {
                 uploader.upload().await.and(script_result)
@@ -187,6 +188,15 @@ impl Run {
     {
         let cancel_token = CancellationToken::new();
 
+        let masked_variables = self
+            .response
+            .variables
+            .iter()
+            .filter(|(_, v)| v.masked)
+            .map(|(_, v)| v.value.as_str())
+            .collect::<Vec<_>>();
+        let masker = Masker::new(&masked_variables, GITLAB_MASK);
+
         let job = Job::new(
             self.client.clone(),
             self.response.clone(),
@@ -198,6 +208,7 @@ impl Run {
                 job,
                 self.client.clone(),
                 self.response.clone(),
+                masker.clone(),
                 process,
                 build_dir,
                 cancel_token.clone(),
@@ -207,15 +218,6 @@ impl Run {
         );
         tokio::pin!(join);
 
-        let masked_variables = self
-            .response
-            .variables
-            .iter()
-            .filter(|(_, v)| v.masked)
-            .map(|(_, v)| v.value.as_str())
-            .collect::<Vec<_>>();
-
-        let masker = Masker::new(&masked_variables, GITLAB_MASK);
         let mut cm = masker.mask_chunks();
 
         let result = loop {
