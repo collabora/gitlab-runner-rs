@@ -169,6 +169,16 @@ pub(crate) struct JobDependency {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct GitlabFeatures {
+    #[serde(default)]
+    pub trace_sections: bool,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub token_mask_prefixes: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub failure_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct JobResponse {
     pub id: u64,
     pub token: String,
@@ -180,6 +190,8 @@ pub(crate) struct JobResponse {
     pub dependencies: Vec<JobDependency>,
     #[serde(deserialize_with = "deserialize_null_default")]
     pub artifacts: Vec<JobArtifact>,
+    #[serde(default)]
+    pub features: Option<GitlabFeatures>,
     #[serde(flatten)]
     unparsed: JsonValue,
 }
