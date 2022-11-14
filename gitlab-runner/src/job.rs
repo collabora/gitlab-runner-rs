@@ -276,7 +276,7 @@ impl Job {
 
     /// Sent data to the gitlab log
     ///
-    /// Normally [`outputln!`] should be used. This function directly puts data in the queue for
+    /// Normally [`outputln!`](crate::outputln) should be used. This function directly puts data in the queue for
     /// the gitlab log and side-steps the tracing infrastructure
     pub fn trace<D: AsRef<[u8]>>(&self, data: D) {
         self.log.trace(data.as_ref());
