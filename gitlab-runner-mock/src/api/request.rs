@@ -107,6 +107,46 @@ impl Respond for JobRequestResponder {
                     value
                 })
                 .collect();
+
+            let failure_reasons = json!([
+                "unknown_failure",
+                "script_failure",
+                "api_failure",
+                "stuck_or_timeout_failure",
+                "runner_system_failure",
+                "missing_dependency_failure",
+                "runner_unsupported",
+                "stale_schedule",
+                "job_execution_timeout",
+                "archived_failure",
+                "unmet_prerequisites",
+                "scheduler_failure",
+                "data_integrity_failure",
+                "forward_deployment_failure",
+                "user_blocked",
+                "project_deleted",
+                "insufficient_bridge_permissions",
+                "downstream_bridge_project_not_found",
+                "invalid_bridge_trigger",
+                "bridge_pipeline_is_child_pipeline",
+                "downstream_pipeline_creation_failed",
+                "secrets_provider_not_found",
+                "reached_max_descendant_pipelines_depth"
+            ]);
+
+            let features = if !job.token_prefixes().is_empty() {
+                json!({
+                    "trace_sections": true,
+                    "token_mask_prefixes": job.token_prefixes(),
+                    "failure_reasons": failure_reasons
+                })
+            } else {
+                json!({
+                    "trace_sections": true,
+                    "failure_reasons": failure_reasons
+                })
+            };
+
             ResponseTemplate::new(201).set_body_json(json!({
                 "id": job.id(),
                 "token": job.token(),
@@ -155,34 +195,7 @@ impl Respond for JobRequestResponder {
                     }
                 ],
                 "dependencies": dependencies,
-                "features": {
-                    "trace_sections": true,
-                    "failure_reasons": [
-                        "unknown_failure",
-                        "script_failure",
-                        "api_failure",
-                        "stuck_or_timeout_failure",
-                        "runner_system_failure",
-                        "missing_dependency_failure",
-                        "runner_unsupported",
-                        "stale_schedule",
-                        "job_execution_timeout",
-                        "archived_failure",
-                        "unmet_prerequisites",
-                        "scheduler_failure",
-                        "data_integrity_failure",
-                        "forward_deployment_failure",
-                        "user_blocked",
-                        "project_deleted",
-                        "insufficient_bridge_permissions",
-                        "downstream_bridge_project_not_found",
-                        "invalid_bridge_trigger",
-                        "bridge_pipeline_is_child_pipeline",
-                        "downstream_pipeline_creation_failed",
-                        "secrets_provider_not_found",
-                        "reached_max_descendant_pipelines_depth"
-                    ]
-                }
+                "features": features
             }))
         } else {
             ResponseTemplate::new(StatusCode::NoContent)
