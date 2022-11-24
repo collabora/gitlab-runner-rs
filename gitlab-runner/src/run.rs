@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use masker::Masker;
+use masker::{Masker, MatchData};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,6 +17,8 @@ use crate::CancellableJobHandler;
 use crate::{JobResult, Phase};
 
 const GITLAB_MASK: &str = "[MASKED]";
+const GITLAB_TOKEN_SUFFIX_CHARS: &str =
+    "-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz=";
 
 async fn run<F, J, Ret>(
     job: Job,
@@ -195,7 +197,22 @@ impl Run {
             .filter(|(_, v)| v.masked)
             .map(|(_, v)| v.value.as_str())
             .collect::<Vec<_>>();
-        let masker = Masker::new(&masked_variables, GITLAB_MASK);
+        let prefixes = self
+            .response
+            .features
+            .iter()
+            .flat_map(|x| x.token_mask_prefixes.iter())
+            // This matches the behaviour of the gitlab runner, which
+            // explicitly supports a maximum of 10 prefixes.
+            .take(10)
+            .map(|p| MatchData {
+                prefix: p.trim().as_bytes(),
+                suffix: GITLAB_TOKEN_SUFFIX_CHARS.as_bytes(),
+                mask_prefix: false,
+            })
+            .collect::<Vec<_>>();
+
+        let masker = Masker::new_with_match_data(&masked_variables, &prefixes, GITLAB_MASK);
 
         let job = Job::new(
             self.client.clone(),
