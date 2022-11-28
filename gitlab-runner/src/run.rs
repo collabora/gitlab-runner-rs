@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use masker::{Masker, MatchData};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,10 +16,15 @@ use crate::uploader::Uploader;
 use crate::CancellableJobHandler;
 use crate::{JobResult, Phase};
 
+const GITLAB_MASK: &str = "[MASKED]";
+const GITLAB_TOKEN_SUFFIX_CHARS: &str =
+    "-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz=";
+
 async fn run<F, J, Ret>(
     job: Job,
     client: Client,
     response: Arc<JobResponse>,
+    masker: Masker,
     process: F,
     build_dir: PathBuf,
     cancel_token: CancellationToken,
@@ -62,7 +68,7 @@ where
         });
 
     let r = if upload {
-        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response) {
+        if let Ok(mut uploader) = Uploader::new(client, &build_dir, response, masker) {
             let r = handler.upload_artifacts(&mut uploader).await;
             if r.is_ok() {
                 uploader.upload().await.and(script_result)
@@ -140,7 +146,13 @@ impl Run {
         buf: Bytes,
         cancel_token: &CancellationToken,
     ) -> Option<Duration> {
-        assert!(!buf.is_empty());
+        if buf.is_empty() {
+            // It's convenient to permit this because if we are
+            // masking, the masker may not have produced any output,
+            // so we'd just end up doing the same test in every
+            // caller, rather than once here.
+            return None;
+        }
         let len = buf.len();
 
         match self
@@ -178,6 +190,30 @@ impl Run {
     {
         let cancel_token = CancellationToken::new();
 
+        let masked_variables = self
+            .response
+            .variables
+            .iter()
+            .filter(|(_, v)| v.masked)
+            .map(|(_, v)| v.value.as_str())
+            .collect::<Vec<_>>();
+        let prefixes = self
+            .response
+            .features
+            .iter()
+            .flat_map(|x| x.token_mask_prefixes.iter())
+            // This matches the behaviour of the gitlab runner, which
+            // explicitly supports a maximum of 10 prefixes.
+            .take(10)
+            .map(|p| MatchData {
+                prefix: p.trim().as_bytes(),
+                suffix: GITLAB_TOKEN_SUFFIX_CHARS.as_bytes(),
+                mask_prefix: false,
+            })
+            .collect::<Vec<_>>();
+
+        let masker = Masker::new_with_match_data(&masked_variables, &prefixes, GITLAB_MASK);
+
         let job = Job::new(
             self.client.clone(),
             self.response.clone(),
@@ -189,6 +225,7 @@ impl Run {
                 job,
                 self.client.clone(),
                 self.response.clone(),
+                masker.clone(),
                 process,
                 build_dir,
                 cancel_token.clone(),
@@ -198,6 +235,8 @@ impl Run {
         );
         tokio::pin!(join);
 
+        let mut cm = masker.mask_chunks();
+
         let result = loop {
             tokio::select! {
                 _ = self.interval.tick() => {
@@ -206,6 +245,7 @@ impl Run {
                     let now = Instant::now();
                     if let Some(buf) = self.joblog.split_trace() {
                         // TODO be resiliant against send errors
+                        let buf = cm.mask_chunk(buf).into();
                         if let Some(interval) = self.send_trace(buf, &cancel_token).await {
                             if interval != self.interval.period() {
                                 self.interval = Self::create_interval(now, interval);
@@ -224,8 +264,12 @@ impl Run {
 
         // Send the remaining trace buffer back to gitlab.
         if let Some(buf) = self.joblog.split_trace() {
+            let buf = cm.mask_chunk(buf).into();
             self.send_trace(buf, &cancel_token).await;
         }
+        // Flush anything the masker was holding back
+        let buf = cm.finish().into();
+        self.send_trace(buf, &cancel_token).await;
 
         // Don't bother updating the status if cancelled, since it will just fail.
         if !cancel_token.is_cancelled() {

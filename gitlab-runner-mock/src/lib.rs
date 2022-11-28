@@ -134,6 +134,15 @@ impl GitlabRunnerMock {
         jobs.jobs.push(job);
     }
 
+    pub fn get_job_artifact(&self, id: u64) -> Option<Vec<u8>> {
+        let jobs = self.inner.jobs.lock().unwrap();
+
+        jobs.jobs
+            .iter()
+            .find(|j| j.id() == id)
+            .map(|j| j.artifact().as_slice().to_vec())
+    }
+
     fn grab_pending_job(&self) -> Option<MockJob> {
         let jobs = self.inner.jobs.lock().unwrap();
         for job in jobs.jobs.iter() {

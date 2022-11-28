@@ -28,7 +28,7 @@ pub fn default_job_variables(job_id: u64) -> Vec<MockJobVariable> {
         },
         MockJobVariable {
             key: "CI_JOB_TOKEN".to_owned(),
-            value: "tokn".to_owned(),
+            value: "job-token".to_owned(),
             public: false,
             masked: true,
         },
@@ -46,7 +46,7 @@ pub fn default_job_variables(job_id: u64) -> Vec<MockJobVariable> {
         },
         MockJobVariable {
             key: "CI_BUILD_TOKEN".to_owned(),
-            value: "tokn".to_owned(),
+            value: "build-token".to_owned(),
             public: false,
             masked: true,
         },
@@ -58,7 +58,7 @@ pub fn default_job_variables(job_id: u64) -> Vec<MockJobVariable> {
         },
         MockJobVariable {
             key: "CI_REGISTRY_PASSWORD".to_owned(),
-            value: "token".to_owned(),
+            value: "registry-password".to_owned(),
             public: false,
             masked: true,
         },
@@ -77,7 +77,7 @@ pub fn default_job_variables(job_id: u64) -> Vec<MockJobVariable> {
         },
         MockJobVariable {
             key: "CI_DEPENDENCY_PROXY_PASSWORD".to_owned(),
-            value: "token".to_owned(),
+            value: "proxy-password".to_owned(),
             public: false,
             masked: true,
         },

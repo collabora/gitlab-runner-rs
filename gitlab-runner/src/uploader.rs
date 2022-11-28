@@ -8,6 +8,7 @@ use std::thread;
 use std::{sync::Arc, task::Poll};
 
 use futures::{future::BoxFuture, AsyncWrite, FutureExt};
+use masker::{ChunkMasker, Masker};
 use reqwest::Body;
 use tokio::fs::File as AsyncFile;
 use tokio::sync::mpsc::{self, error::SendError};
@@ -71,6 +72,7 @@ fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
 pub struct UploadFile<'a> {
     tx: &'a mpsc::Sender<UploadRequest>,
     state: UploadFileState<'a>,
+    masker: Option<ChunkMasker<'a>>,
 }
 
 impl<'a> AsyncWrite for UploadFile<'a> {
@@ -84,10 +86,12 @@ impl<'a> AsyncWrite for UploadFile<'a> {
             match this.state {
                 UploadFileState::Idle => {
                     let (tx, rx) = oneshot::channel();
-                    let send = this
-                        .tx
-                        .send(UploadRequest::WriteData(Vec::from(buf), tx))
-                        .boxed();
+                    let buf = if let Some(masker) = &mut this.masker {
+                        masker.mask_chunk(buf)
+                    } else {
+                        Vec::from(buf)
+                    };
+                    let send = this.tx.send(UploadRequest::WriteData(buf, tx)).boxed();
                     this.state = UploadFileState::Writing(Some(send), rx)
                 }
                 UploadFileState::Writing(ref mut send, ref mut rx) => {
@@ -114,9 +118,33 @@ impl<'a> AsyncWrite for UploadFile<'a> {
 
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+        let this = self.get_mut();
+        if let Some(masker) = this.masker.take() {
+            let (tx, mut rx) = oneshot::channel();
+            let buf = masker.finish();
+            let mut send = Some(this.tx.send(UploadRequest::WriteData(buf, tx)).boxed());
+
+            loop {
+                if let Some(mut f) = send {
+                    // Phase 1: Waiting for the send to the writer
+                    // thread to complete.
+
+                    // TODO error handling
+                    let _r = futures::ready!(f.as_mut().poll(cx));
+                    send = None;
+                } else {
+                    // Phase 2: Waiting for the writer thread to
+                    // signal write completion.
+
+                    let _r = futures::ready!(Pin::new(&mut rx).poll(cx));
+                    return Poll::Ready(Ok(()));
+                }
+            }
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 }
 
@@ -125,6 +153,7 @@ pub struct Uploader {
     client: Client,
     data: Arc<JobResponse>,
     tx: mpsc::Sender<UploadRequest>,
+    masker: Masker,
 }
 
 impl Uploader {
@@ -132,13 +161,19 @@ impl Uploader {
         client: Client,
         build_dir: &Path,
         data: Arc<JobResponse>,
+        masker: Masker,
     ) -> Result<Self, ()> {
         let temp = tempfile::tempfile_in(build_dir)
             .map_err(|e| warn!("Failed to create artifacts temp file: {:?}", e))?;
 
         let (tx, rx) = mpsc::channel(2);
         thread::spawn(move || zip_thread(temp, rx));
-        Ok(Self { client, data, tx })
+        Ok(Self {
+            client,
+            data,
+            tx,
+            masker,
+        })
     }
 
     /// Create a new file to be uploaded
@@ -149,6 +184,20 @@ impl Uploader {
             .expect("Failed to create file");
         UploadFile {
             tx: &self.tx,
+            masker: None,
+            state: UploadFileState::Idle,
+        }
+    }
+
+    /// Create a new file to be uploaded, which will be masked
+    pub async fn masked_file(&mut self, name: String) -> UploadFile<'_> {
+        self.tx
+            .send(UploadRequest::NewFile(name))
+            .await
+            .expect("Failed to create file");
+        UploadFile {
+            tx: &self.tx,
+            masker: Some(self.masker.mask_chunks()),
             state: UploadFileState::Idle,
         }
     }

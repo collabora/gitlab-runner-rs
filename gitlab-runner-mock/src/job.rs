@@ -117,6 +117,7 @@ pub struct MockJob {
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
     artifacts: Vec<MockJobArtifact>,
+    token_prefixes: Vec<String>,
     inner: Arc<Mutex<MockJobInner>>,
 }
 
@@ -143,6 +144,7 @@ impl MockJob {
             steps: Vec::new(),
             dependencies: Vec::new(),
             artifacts: Vec::new(),
+            token_prefixes: Vec::new(),
             inner: Arc::new(Mutex::new(MockJobInner {
                 state: MockJobState::Success,
                 state_updates: 2,
@@ -175,6 +177,10 @@ impl MockJob {
 
     pub fn variables(&self) -> &[MockJobVariable] {
         &self.variables
+    }
+
+    pub fn token_prefixes(&self) -> &[String] {
+        &self.token_prefixes
     }
 
     pub fn steps(&self) -> &[MockJobStep] {
@@ -265,6 +271,7 @@ pub struct MockJobBuilder {
     variables: HashMap<String, MockJobVariable>,
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
+    token_prefixes: Vec<String>,
     artifacts: Vec<MockJobArtifact>,
 }
 
@@ -291,6 +298,10 @@ impl MockJobBuilder {
                 masked,
             },
         );
+    }
+
+    pub fn add_token_prefix(&mut self, prefix: String) {
+        self.token_prefixes.push(prefix);
     }
 
     pub fn add_step(
@@ -373,6 +384,7 @@ impl MockJobBuilder {
             variables: self.variables.into_values().collect(),
             dependencies: self.dependencies,
             artifacts: self.artifacts,
+            token_prefixes: self.token_prefixes,
             inner,
         }
     }
