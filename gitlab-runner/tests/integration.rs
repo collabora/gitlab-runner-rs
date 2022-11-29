@@ -413,6 +413,53 @@ async fn job_log() {
 }
 
 #[tokio::test]
+async fn job_mask_log() {
+    let mock = GitlabRunnerMock::start().await;
+    let job = {
+        let mut b = mock.job_builder("log".to_string());
+        b.add_variable("SECRET".to_string(), "$ecret".to_string(), false, true);
+        b.add_step(
+            MockJobStepName::Script,
+            vec!["dummy".to_string()],
+            3600,
+            MockJobStepWhen::OnSuccess,
+            false,
+        );
+        b.build()
+    };
+    mock.enqueue_job(job.clone());
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut runner, layer) = Runner::new_with_layer(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
+
+    let subscriber = Registry::default().with(layer);
+    async {
+        tracing::info!("TEST");
+        let got_job = runner
+            .request_job(|job| async move {
+                tracing::info!("TEST1234");
+                outputln!("aa-$ecret");
+                job.trace("bb$ec");
+                outputln!("retxyz");
+                SimpleRun::dummy(Ok(())).await
+            })
+            .with_current_subscriber()
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+        assert_eq!(b"aa-[MASKED]\nbb[MASKED]xyz\n", job.log().as_slice());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[tokio::test]
 async fn job_steps() {
     let mock = GitlabRunnerMock::start().await;
     let mut builder = mock.job_builder("steps".to_string());
