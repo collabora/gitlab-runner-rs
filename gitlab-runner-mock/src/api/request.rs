@@ -65,15 +65,16 @@ impl Respond for JobRequestResponder {
                 .dependencies()
                 .iter()
                 .map(|j| {
-                    let artifact = j.artifact();
-                    let artifact_file = if !artifact.is_empty() {
-                        Some(json!({
-                            "filename": "artifacts.zip",
-                            "size": artifact.len(),
-                        }))
-                    } else {
-                        None
-                    };
+                    let artifact_file = j
+                        .uploaded_artifacts()
+                        .find(|a| a.artifact_type.as_deref() == Some("archive"))
+                        .map(|artifact| {
+                            Some(json!({
+                                "filename": artifact.filename,
+                                "size": artifact.data.len(),
+                            }))
+                        });
+
                     json!({
                         "id": j.id() ,
                         "name": j.name() ,

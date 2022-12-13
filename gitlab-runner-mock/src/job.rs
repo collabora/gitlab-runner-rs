@@ -48,11 +48,19 @@ pub enum LogError {
     IncorrectEnd,
 }
 
+#[derive(Clone, Debug)]
+pub struct MockUploadedJobArtifact {
+    pub filename: Option<String>,
+    pub data: Arc<Vec<u8>>,
+    pub artifact_format: Option<String>,
+    pub artifact_type: Option<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct MockJobInner {
     state: MockJobState,
     state_updates: u32,
-    artifact: Arc<Vec<u8>>,
+    uploaded_artifacts: Vec<MockUploadedJobArtifact>,
     log: Vec<Vec<u8>>,
     log_patches: u32,
 }
@@ -135,6 +143,17 @@ impl MockJob {
     }
 
     pub(crate) fn new_completed(name: String, id: u64, artifact: Vec<u8>) -> Self {
+        let artifacts = if artifact.is_empty() {
+            Vec::new()
+        } else {
+            vec![MockUploadedJobArtifact {
+                filename: Some("default.zip".to_string()),
+                data: Arc::new(artifact),
+                artifact_format: None,
+                artifact_type: None,
+            }]
+        };
+
         Self {
             name,
             id,
@@ -146,7 +165,7 @@ impl MockJob {
             inner: Arc::new(Mutex::new(MockJobInner {
                 state: MockJobState::Success,
                 state_updates: 2,
-                artifact: Arc::new(artifact),
+                uploaded_artifacts: artifacts,
                 log: Vec::new(),
                 log_patches: 0,
             })),
@@ -211,9 +230,9 @@ impl MockJob {
         inner.log_patches
     }
 
-    pub fn artifact(&self) -> Arc<Vec<u8>> {
+    pub fn uploaded_artifacts(&self) -> impl Iterator<Item = MockUploadedJobArtifact> {
         let inner = self.inner.lock().unwrap();
-        inner.artifact.clone()
+        inner.uploaded_artifacts.clone().into_iter()
     }
 
     pub fn cancel(&self) {
@@ -251,10 +270,20 @@ impl MockJob {
         Ok(())
     }
 
-    pub(crate) fn set_artifact(&self, data: Vec<u8>) {
+    pub(crate) fn add_artifact(
+        &self,
+        filename: Option<String>,
+        data: Vec<u8>,
+        artifact_type: Option<&str>,
+        artifact_format: Option<&str>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
-        assert!(inner.artifact.is_empty());
-        inner.artifact = Arc::new(data);
+        inner.uploaded_artifacts.push(MockUploadedJobArtifact {
+            filename,
+            data: Arc::new(data),
+            artifact_format: artifact_format.map(str::to_string),
+            artifact_type: artifact_type.map(str::to_string),
+        });
     }
 }
 
@@ -361,7 +390,7 @@ impl MockJobBuilder {
             state_updates: 0,
             log: Vec::new(),
             log_patches: 0,
-            artifact: Arc::default(),
+            uploaded_artifacts: Vec::new(),
         };
 
         let inner = Arc::new(Mutex::new(inner));
