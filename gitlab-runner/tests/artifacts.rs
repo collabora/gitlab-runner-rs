@@ -1,9 +1,17 @@
 use std::borrow::Cow;
 use std::io::Read;
 
+use flate2::read::GzDecoder;
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::Registry;
+use zip::ZipArchive;
+
 use gitlab_runner::job::Job;
 use gitlab_runner::{JobHandler, JobResult, Phase, Runner, UploadableFile};
-use gitlab_runner_mock::{GitlabRunnerMock, MockJobState, MockJobStepName, MockJobStepWhen};
+use gitlab_runner_mock::{
+    GitlabRunnerMock, MockJobArtifactWhen, MockJobState, MockJobStepName, MockJobStepWhen,
+};
 
 #[derive(PartialEq, Eq)]
 enum TestFile {
@@ -122,26 +130,159 @@ async fn upload_download() {
     mock.enqueue_job(download.clone());
     let dir = tempfile::tempdir().unwrap();
 
-    let mut runner = Runner::new(
+    let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
         dir.path().to_path_buf(),
     );
 
-    // Upload job comes first
-    let got_job = runner
-        .request_job(|_job| async move { Ok(Upload()) })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, upload.state());
+    let subscriber = Registry::default().with(layer);
+    async {
+        // Upload job comes first
+        let got_job = runner
+            .request_job(|_job| async move { Ok(Upload()) })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, upload.state());
 
-    let got_job = runner
-        .request_job(|job| async move { Ok(Download::new(job).await) })
-        .await
-        .unwrap();
-    assert!(got_job);
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, download.state());
+        let got_job = runner
+            .request_job(|job| async move { Ok(Download::new(job).await) })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, download.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[tokio::test]
+async fn multiple_upload() {
+    let mock = GitlabRunnerMock::start().await;
+    let mut upload = mock.job_builder("multiple uploads".to_string());
+
+    upload.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_string()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+
+    upload.add_artifact(
+        None,
+        false,
+        vec!["*".to_string()],
+        Some(MockJobArtifactWhen::OnSuccess),
+        "archive".to_string(),
+        Some("zip".to_string()),
+        None,
+    );
+
+    upload.add_artifact(
+        Some("junit".to_string()),
+        false,
+        vec!["test2".to_string()],
+        Some(MockJobArtifactWhen::Always),
+        "junit".to_string(),
+        Some("gzip".to_string()),
+        None,
+    );
+
+    let upload = upload.build();
+    mock.enqueue_job(upload.clone());
+
+    let mut download = mock.job_builder("download artifact".to_string());
+    download.dependency(upload.clone());
+    download.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_string()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+
+    let download = download.build();
+
+    mock.enqueue_job(download.clone());
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let (mut runner, layer) = Runner::new_with_layer(
+        mock.uri(),
+        mock.runner_token().to_string(),
+        dir.path().to_path_buf(),
+    );
+
+    let subscriber = Registry::default().with(layer);
+    async {
+        let got_job = runner
+            .request_job(|_job| async move { Ok(Upload()) })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, upload.state());
+
+        let mut saw_zip = false;
+        let mut saw_gzip = false;
+        for artifact in upload.uploaded_artifacts() {
+            match artifact.filename.as_deref() {
+                Some("default.zip") => {
+                    assert_eq!(artifact.artifact_format.as_deref(), Some("zip"));
+                    assert_eq!(artifact.artifact_type.as_deref(), Some("archive"));
+                    let mut z = ZipArchive::new(std::io::Cursor::new(artifact.data.as_slice()))
+                        .expect("failed to open zip archive");
+                    saw_zip = true;
+                    assert_eq!(z.len(), 2);
+                    for ix in 0..z.len() {
+                        let mut f = z.by_index(ix).expect("failed to get zip file");
+                        match f.name() {
+                            "test" => {
+                                let mut data = Vec::new();
+                                f.read_to_end(&mut data).expect("failed to read zip file");
+                                assert_eq!(b"testdata", data.as_slice());
+                            }
+                            "test2" => {
+                                let mut data = Vec::new();
+                                f.read_to_end(&mut data).expect("failed to read zip file");
+                                assert_eq!(b"testdata2", data.as_slice());
+                            }
+                            _ => {
+                                unreachable!("unknown file in archive");
+                            }
+                        }
+                    }
+                }
+                Some("junit.gz") => {
+                    assert_eq!(artifact.artifact_format.as_deref(), Some("gzip"));
+                    assert_eq!(artifact.artifact_type.as_deref(), Some("junit"));
+                    saw_gzip = true;
+                    let mut gz = GzDecoder::new(std::io::Cursor::new(artifact.data.as_slice()));
+                    let mut data = Vec::new();
+                    gz.read_to_end(&mut data).expect("failed to read gzip file");
+                    assert_eq!(b"testdata2", data.as_slice());
+                }
+                _ => {
+                    unreachable!("unknown artifact type in archive");
+                }
+            }
+        }
+
+        assert!(saw_zip, "No zip file was uploaded");
+        assert!(saw_gzip, "No gzip file was uploaded");
+
+        let got_job = runner
+            .request_job(|job| async move { Ok(Download::new(job).await) })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, download.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }
