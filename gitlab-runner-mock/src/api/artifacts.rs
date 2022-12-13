@@ -54,15 +54,44 @@ impl Respond for JobArtifactsUploader {
 
                 let mut multipart =
                     Multipart::with_body(std::io::Cursor::new(&request.body), boundary);
+
+                let mut filename = None;
+                let mut data = Vec::new();
+                let mut artifact_type = None;
+                let mut artifact_format = None;
                 while let Some(mut part) = multipart.read_entry().unwrap() {
-                    if &*part.headers.name == "file" {
-                        let mut data = Vec::new();
-                        part.data
-                            .read_to_end(&mut data)
-                            .expect("failed to read multipart data");
-                        job.set_artifact(data);
+                    match &*part.headers.name {
+                        "file" => {
+                            filename = part.headers.filename.clone();
+                            part.data
+                                .read_to_end(&mut data)
+                                .expect("failed to read multipart data");
+                        }
+                        "artifact_format" => {
+                            let mut value = String::new();
+                            part.data
+                                .read_to_string(&mut value)
+                                .expect("failed to read artifact format");
+                            artifact_format = Some(value);
+                        }
+                        "artifact_type" => {
+                            let mut value = String::new();
+                            part.data
+                                .read_to_string(&mut value)
+                                .expect("failed to read artifact type");
+                            artifact_type = Some(value);
+                        }
+                        _ => {
+                            unimplemented!("Unknown field in request: {}", &*part.headers.name);
+                        }
                     }
                 }
+                job.add_artifact(
+                    filename,
+                    data,
+                    artifact_type.as_deref(),
+                    artifact_format.as_deref(),
+                );
 
                 ResponseTemplate::new(StatusCode::Created)
             }
@@ -104,7 +133,16 @@ impl Respond for JobArtifactsDownloader {
             if token != job.token() {
                 ResponseTemplate::new(StatusCode::Forbidden)
             } else {
-                ResponseTemplate::new(StatusCode::Ok).set_body_bytes(job.artifact().as_slice())
+                match job
+                    .uploaded_artifacts()
+                    .find(|a| a.artifact_type.as_deref() == Some("archive"))
+                    .map(|a| a.data)
+                {
+                    Some(data) => {
+                        ResponseTemplate::new(StatusCode::Ok).set_body_bytes(data.as_slice())
+                    }
+                    None => ResponseTemplate::new(StatusCode::NotFound),
+                }
             }
         } else {
             ResponseTemplate::new(StatusCode::NotFound)
