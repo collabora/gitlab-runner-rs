@@ -16,6 +16,7 @@ use url::Url;
 struct Opts {
     server: Url,
     token: String,
+    system_id: String,
 }
 
 #[derive(Deserialize)]
@@ -189,8 +190,12 @@ async fn main() {
     let opts = Opts::from_args();
     let dir = tempfile::tempdir().unwrap();
 
-    let (mut runner, layer) =
-        Runner::new_with_layer(opts.server, opts.token, dir.path().to_path_buf());
+    let (mut runner, layer) = Runner::new_with_layer(
+        opts.server,
+        opts.token,
+        opts.system_id,
+        dir.path().to_path_buf(),
+    );
 
     tracing_subscriber::Registry::default()
         .with(

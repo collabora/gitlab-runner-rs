@@ -274,6 +274,7 @@ async fn job_success() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -300,6 +301,7 @@ async fn job_fail() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -326,6 +328,7 @@ async fn job_panic() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -356,6 +359,7 @@ async fn job_cancel_step() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_owned(),
+        mock.runner_system_id().to_owned(),
         dir.path().to_path_buf(),
     );
 
@@ -386,6 +390,7 @@ async fn job_log() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -432,6 +437,7 @@ async fn job_steps() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -466,6 +472,7 @@ async fn job_parallel() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -523,6 +530,7 @@ async fn runner_run() {
     let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -582,6 +590,7 @@ async fn runner_limit() {
     let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -642,6 +651,7 @@ async fn runner_delay() {
     let (mut r, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -707,6 +717,7 @@ async fn job_variables() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -748,6 +759,7 @@ async fn job_drain() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 

@@ -81,6 +81,7 @@ struct VersionInfo {
 #[derive(Debug, Clone, Serialize)]
 struct JobRequest<'a> {
     token: &'a str,
+    system_id: &'a str,
     info: VersionInfo,
 }
 
@@ -275,20 +276,23 @@ pub(crate) struct Client {
     client: reqwest::Client,
     url: Url,
     token: String,
+    system_id: String,
 }
 
 impl Client {
-    pub fn new(url: Url, token: String) -> Self {
+    pub fn new(url: Url, token: String, system_id: String) -> Self {
         Self {
             client: reqwest::Client::new(),
             url,
             token,
+            system_id,
         }
     }
 
     pub async fn request_job(&self) -> Result<Option<JobResponse>, Error> {
         let request = JobRequest {
             token: &self.token,
+            system_id: &self.system_id,
             info: VersionInfo {
                 // Setting `refspecs` is required to run detached MR pipelines.
                 features: FeaturesInfo {
@@ -525,7 +529,11 @@ mod test {
     async fn no_job() {
         let mock = GitlabRunnerMock::start().await;
 
-        let client = Client::new(mock.uri(), mock.runner_token().to_string());
+        let client = Client::new(
+            mock.uri(),
+            mock.runner_token().to_string(),
+            mock.runner_system_id().to_string(),
+        );
 
         let job = client.request_job().await.unwrap();
 
@@ -537,7 +545,11 @@ mod test {
         let mock = GitlabRunnerMock::start().await;
         mock.add_dummy_job("process job".to_string());
 
-        let client = Client::new(mock.uri(), mock.runner_token().to_string());
+        let client = Client::new(
+            mock.uri(),
+            mock.runner_token().to_string(),
+            mock.runner_system_id().to_string(),
+        );
 
         if let Some(job) = client.request_job().await.unwrap() {
             client

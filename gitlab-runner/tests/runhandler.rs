@@ -186,6 +186,7 @@ async fn update_interval() {
     let mut runner = Runner::new(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 

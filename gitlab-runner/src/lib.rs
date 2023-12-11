@@ -34,6 +34,7 @@
 //!     let mut runner = Runner::new(
 //!         "https://gitlab.example.com".try_into().unwrap(),
 //!         "runner token".to_owned(),
+//!         "runner system id".to_owned(),
 //!         PathBuf::from("/tmp"));
 //!     runner.run(move | _job | async move { Ok(Run{})  }, 16).await.unwrap();
 //! }
@@ -275,8 +276,8 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Create a new Runner for the given server url and runner token, storing (temporary job
-    /// files) in build_dir
+    /// Create a new Runner for the given server url, runner token and system ID, storing
+    /// (temporary job files) in build_dir
     ///
     /// The build_dir is used to store temporary files during a job run. This will also configure a
     /// default tracing subscriber if that's not wanted use [`Runner::new_with_layer`] instead.
@@ -288,14 +289,15 @@ impl Runner {
     /// let dir = tempfile::tempdir().unwrap();
     /// let runner = Runner::new(Url::parse("https://gitlab.com/").unwrap(),
     ///     "RunnerToken".to_string(),
+    ///     "RunnerSystemID".to_string(),
     ///     dir.path().to_path_buf());
     /// ```
     ///
     /// # Panics
     ///
     /// Panics if a default subscriber is already setup
-    pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
-        let (runner, layer) = Self::new_with_layer(server, token, build_dir);
+    pub fn new(server: Url, token: String, system_id: String, build_dir: PathBuf) -> Self {
+        let (runner, layer) = Self::new_with_layer(server, token, system_id, build_dir);
         Registry::default().with(layer).init();
 
         runner
@@ -314,11 +316,17 @@ impl Runner {
     /// let dir = tempfile::tempdir().unwrap();
     /// let (runner, layer) = Runner::new_with_layer(Url::parse("https://gitlab.com/").unwrap(),
     ///     "RunnerToken".to_string(),
+    ///     "RunnerSystemID".to_string(),
     ///     dir.path().to_path_buf());
     /// let subscriber = Registry::default().with(layer).init();
     /// ```
-    pub fn new_with_layer(server: Url, token: String, build_dir: PathBuf) -> (Self, GitlabLayer) {
-        let client = Client::new(server, token);
+    pub fn new_with_layer(
+        server: Url,
+        token: String,
+        system_id: String,
+        build_dir: PathBuf,
+    ) -> (Self, GitlabLayer) {
+        let client = Client::new(server, token, system_id);
         let run_list = RunList::new();
         (
             Self {

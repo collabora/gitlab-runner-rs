@@ -133,6 +133,7 @@ async fn upload_download() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 
@@ -214,6 +215,7 @@ async fn multiple_upload() {
     let (mut runner, layer) = Runner::new_with_layer(
         mock.uri(),
         mock.runner_token().to_string(),
+        mock.runner_system_id().to_string(),
         dir.path().to_path_buf(),
     );
 

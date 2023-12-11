@@ -29,6 +29,7 @@ struct JobData {
 struct Inner {
     server: MockServer,
     runner_token: String,
+    system_id: String,
     jobs: Mutex<JobData>,
     update_interval: Mutex<u32>,
 }
@@ -48,6 +49,7 @@ impl GitlabRunnerMock {
         let inner = Inner {
             server: m,
             runner_token: "fakerunnertoken".to_string(),
+            system_id: "r_0123456789ab".to_string(),
             jobs: Mutex::new(jobs),
             update_interval: Mutex::new(3),
         };
@@ -96,6 +98,10 @@ impl GitlabRunnerMock {
 
     pub fn runner_token(&self) -> &str {
         &self.inner.runner_token
+    }
+
+    pub fn runner_system_id(&self) -> &str {
+        &self.inner.system_id
     }
 
     pub fn add_dummy_job(&self, name: String) -> MockJob {
