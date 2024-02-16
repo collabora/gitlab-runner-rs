@@ -1,5 +1,10 @@
-use tracing::{field, metadata::LevelFilter, Subscriber};
-use tracing_subscriber::{registry::LookupSpan, Layer};
+use tracing::{field, metadata::LevelFilter, subscriber::Interest, Metadata, Subscriber};
+use tracing_subscriber::{
+    filter::Filtered,
+    layer::{Context, Filter},
+    registry::LookupSpan,
+    Layer,
+};
 
 use crate::{
     job::JobLog,
@@ -71,10 +76,16 @@ impl GitlabLayer {
     /// let (layer, _jobs) = GitlabLayer::new();
     /// let subscriber = Registry::default().with(layer).init();
     /// ```
-    pub fn new() -> (Self, JobRunList) {
+    pub fn new<S>() -> (Filtered<Self, GitlabFilter, S>, JobRunList)
+    where
+        S: Subscriber + for<'span> LookupSpan<'span> + 'static,
+    {
         let run_list = RunList::new();
-        let jobs = JobRunList::from(run_list.clone());
-        (GitlabLayer { run_list }, jobs)
+        let job_run_list = JobRunList::from(run_list.clone());
+        (
+            Filtered::new(GitlabLayer { run_list }, GitlabFilter {}),
+            job_run_list,
+        )
     }
 }
 
@@ -83,7 +94,7 @@ where
     S: Subscriber + Send + Sync + 'static,
     S: for<'a> LookupSpan<'a>,
 {
-    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
         let mut gitlab_output = GitlabOutput::default();
         event.record(&mut gitlab_output);
 
@@ -101,12 +112,8 @@ where
         }
     }
 
-    fn enabled(
-        &self,
-        metadata: &tracing::Metadata<'_>,
-        ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) -> bool {
-        let _ = (metadata, ctx);
+    fn enabled(&self, _metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        // This only gets called if the filters enabled returns true, so no need for futher checks
         true
     }
 
@@ -118,18 +125,17 @@ where
         subscriber.register_filter();
     }
 
-    fn register_callsite(
-        &self,
-        _metadata: &'static tracing::Metadata<'static>,
-    ) -> tracing::subscriber::Interest {
-        tracing::subscriber::Interest::always()
+    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        // This only gets called if the filters callsite_enabled returned !never, so no need to
+        // check further
+        Interest::always()
     }
 
     fn on_new_span(
         &self,
         attrs: &tracing::span::Attributes<'_>,
         id: &tracing::Id,
-        ctx: tracing_subscriber::layer::Context<'_, S>,
+        ctx: Context<'_, S>,
     ) {
         let mut f = GitlabJobFinder(None);
         attrs.record(&mut f);
@@ -137,6 +143,32 @@ where
             let span = ctx.span(id).unwrap();
             let mut extensions = span.extensions_mut();
             extensions.insert(job);
+        }
+    }
+}
+
+pub struct GitlabFilter {}
+
+impl GitlabFilter {
+    // Only spans and events with gitlab fields are of interest
+    fn is_enabled(&self, metadata: &Metadata) -> bool {
+        metadata
+            .fields()
+            .iter()
+            .any(|f| f.name().starts_with("gitlab."))
+    }
+}
+
+impl<S> Filter<S> for GitlabFilter {
+    fn enabled(&self, meta: &Metadata<'_>, _cx: &Context<'_, S>) -> bool {
+        self.is_enabled(meta)
+    }
+
+    fn callsite_enabled(&self, metadata: &'static Metadata<'static>) -> Interest {
+        if self.is_enabled(metadata) {
+            Interest::always()
+        } else {
+            Interest::never()
         }
     }
 }
