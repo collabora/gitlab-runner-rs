@@ -3,7 +3,7 @@ use std::pin::Pin;
 // Test the interaction intervals with the backend as driver by the runhandler
 //
 use gitlab_runner::job::Job;
-use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJob, MockJobState};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -188,12 +188,9 @@ async fn update_interval() {
     let dir = tempfile::tempdir().unwrap();
     let (layer, jobs) = GitlabLayer::new();
     let subscriber = Registry::default().with(layer);
-    let mut runner = Runner::new(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-        jobs,
-    );
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
 
     async {
         let (control, rx) = LoggerControl::new();

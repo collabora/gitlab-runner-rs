@@ -1,19 +1,13 @@
-use hmac::{Hmac, Mac};
-use rand::distributions::{Alphanumeric, DistString};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, StatusCode};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::fmt::Write;
-use std::fs::File;
-use std::io::Read;
 use std::ops::Not;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tracing::warn;
 use url::Url;
 use zip::result::ZipError;
 
@@ -286,61 +280,12 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub fn new(url: Url, token: String) -> Self {
-        let system_id = Self::generate_system_id();
+    pub fn new(url: Url, token: String, system_id: String) -> Self {
         Self {
             client: reqwest::Client::new(),
             url,
             token,
             system_id,
-        }
-    }
-
-    fn generate_system_id_from_machine_id() -> Option<String> {
-        // Ideally this would be async for consistency, but that's for the next API bump really. In
-        // practise the client will be created at the start of the runner and the amount read is
-        // really tiny so blocking is not a real issue.
-        let mut f = match File::open("/etc/machine-id") {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(e) => {
-                warn!("Failed to open machine-id: {e}");
-                return None;
-            }
-        };
-
-        let mut id = [0u8; 32];
-        match f.read(&mut id) {
-            Ok(r) if r != 32 => {
-                warn!("Short read from machine-id (only {} bytes)", r);
-                return None;
-            }
-            Err(e) => {
-                warn!("Failed to read from machine-id: {e}");
-                return None;
-            }
-            _ => (),
-        };
-
-        // Infallible as a hmac can take a key of any size
-        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&id).unwrap();
-        mac.update(b"gitlab-runner");
-
-        let mut system_id = String::from("s_");
-        for b in &mac.finalize().into_bytes()[0..6] {
-            // Infallible: writing to a string
-            write!(&mut system_id, "{:02x}", b).unwrap();
-        }
-        Some(system_id)
-    }
-
-    fn generate_system_id() -> String {
-        if let Some(system_id) = Self::generate_system_id_from_machine_id() {
-            system_id
-        } else {
-            let mut system_id = String::from("r_");
-            Alphanumeric.append_string(&mut rand::thread_rng(), &mut system_id, 12);
-            system_id
         }
     }
 
@@ -584,7 +529,11 @@ mod test {
     async fn no_job() {
         let mock = GitlabRunnerMock::start().await;
 
-        let client = Client::new(mock.uri(), mock.runner_token().to_string());
+        let client = Client::new(
+            mock.uri(),
+            mock.runner_token().to_string(),
+            "s_ystem_id1234".to_string(),
+        );
 
         let job = client.request_job().await.unwrap();
 
@@ -596,7 +545,11 @@ mod test {
         let mock = GitlabRunnerMock::start().await;
         mock.add_dummy_job("process job".to_string());
 
-        let client = Client::new(mock.uri(), mock.runner_token().to_string());
+        let client = Client::new(
+            mock.uri(),
+            mock.runner_token().to_string(),
+            "s_ystem_id1234".to_string(),
+        );
 
         if let Some(job) = client.request_job().await.unwrap() {
             client

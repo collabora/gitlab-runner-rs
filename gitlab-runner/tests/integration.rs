@@ -1,6 +1,6 @@
 use futures::future;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBuilder};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
@@ -273,12 +273,9 @@ async fn setup_runner(mock: &GitlabRunnerMock) -> (Runner, impl Subscriber, Temp
     let subscriber = Registry::default()
         .with(layer)
         .with(tracing_subscriber::fmt::layer());
-    let runner = Runner::new(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-        jobs,
-    );
+    let runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
     (runner, subscriber, dir)
 }
 

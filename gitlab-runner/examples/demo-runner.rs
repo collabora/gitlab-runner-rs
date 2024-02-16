@@ -4,7 +4,9 @@ use std::io::Read;
 use futures::io::Cursor;
 use futures::AsyncRead;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner, UploadableFile};
+use gitlab_runner::{
+    outputln, GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile,
+};
 use serde::Deserialize;
 use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
@@ -202,7 +204,9 @@ async fn main() {
 
     info!("Using {} as build storage prefix", dir.path().display());
 
-    let mut runner = Runner::new(opts.server, opts.token, dir.path().to_path_buf(), jobs);
+    let mut runner = RunnerBuilder::new(opts.server, opts.token, dir.path(), jobs)
+        .build()
+        .await;
 
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");

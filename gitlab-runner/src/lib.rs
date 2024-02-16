@@ -12,7 +12,7 @@
 //! runner can be implement as such:
 //!
 //! ```rust,no_run
-//! use gitlab_runner::{outputln, GitlabLayer, Runner, JobHandler, JobResult, Phase};
+//! use gitlab_runner::{outputln, GitlabLayer, RunnerBuilder, JobHandler, JobResult, Phase};
 //! use tracing_subscriber::prelude::*;
 //! use std::path::PathBuf;
 //!
@@ -41,11 +41,14 @@
 //!        )
 //!        .with(layer)
 //!        .init();
-//!     let mut runner = Runner::new(
-//!         "https://gitlab.example.com".try_into().unwrap(),
-//!         "runner token".to_owned(),
-//!         PathBuf::from("/tmp"),
-//!         jobs);
+//!     let mut runner = RunnerBuilder::new(
+//!             "https://gitlab.example.com".try_into().expect("failed to parse url"),
+//!             "runner token",
+//!             "/tmp",
+//!             jobs
+//!         )
+//!         .build()
+//!         .await;
 //!     runner.run(move | _job | async move { Ok(Run{})  }, 16).await.unwrap();
 //! }
 //! ```
@@ -82,19 +85,27 @@ use crate::client::Client;
 mod run;
 use crate::run::Run;
 pub mod job;
+use hmac::Hmac;
+use hmac::Mac;
 use job::{Job, JobLog};
 pub mod uploader;
 pub use logging::GitlabLayer;
+use rand::distributions::Alphanumeric;
+use rand::distributions::DistString;
 use runlist::JobRunList;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::instrument::WithSubscriber;
-pub use uploader::UploadFile;
+
 mod runlist;
 use crate::runlist::RunList;
 
 use futures::prelude::*;
 use futures::AsyncRead;
 use std::borrow::Cow;
+use std::fmt::Write;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -274,6 +285,131 @@ where
     }
 }
 
+/// Builder for [`Runner`]
+pub struct RunnerBuilder {
+    server: Url,
+    token: String,
+    build_dir: PathBuf,
+    system_id: Option<String>,
+    run_list: RunList<u64, JobLog>,
+}
+
+impl RunnerBuilder {
+    // The official gitlab runner uses 2 char prefixes (s_ or r_) followed
+    // by 12 characters for a unique identifier
+    const DEFAULT_ID_LEN: usize = 12;
+    /// Create a new [`RunnerBuilder`] for the given server url, runner token,
+    /// build dir and job list (as created by GitlabLayer::new).
+    ///
+    /// The build_dir is used to store temporary files during a job run.
+    /// ```
+    /// # use tracing_subscriber::{prelude::*, Registry};
+    /// # use gitlab_runner::{RunnerBuilder, GitlabLayer};
+    /// # use url::Url;
+    /// #
+    /// #[tokio::main]
+    /// # async fn main() {
+    /// let dir = tempfile::tempdir().unwrap();
+    /// let (layer, jobs) = GitlabLayer::new();
+    /// let subscriber = Registry::default().with(layer).init();
+    /// let runner = RunnerBuilder::new(
+    ///         Url::parse("https://gitlab.com/").unwrap(),
+    ///         "RunnerToken",
+    ///         dir.path(),
+    ///         jobs
+    ///     )
+    ///     .build()
+    ///     .await;
+    /// # }
+    /// ```
+    pub fn new<P: Into<PathBuf>, S: Into<String>>(
+        server: Url,
+        token: S,
+        build_dir: P,
+        jobs: JobRunList,
+    ) -> Self {
+        RunnerBuilder {
+            server,
+            token: token.into(),
+            build_dir: build_dir.into(),
+            system_id: None,
+            run_list: jobs.inner(),
+        }
+    }
+
+    /// Set the [system_id](https://docs.gitlab.com/runner/fleet_scaling/#generation-of-system_id-identifiers) for this runner
+    ///
+    /// The system_id will be truncated to 64 characters to match gitlabs limit,
+    /// but no further validation will be done. It's up to the caller to ensure the
+    /// system_id is valid for gitlab
+    pub fn system_id<S: Into<String>>(mut self, system_id: S) -> Self {
+        let mut system_id = system_id.into();
+        system_id.truncate(64);
+        self.system_id = Some(system_id);
+        self
+    }
+
+    async fn generate_system_id_from_machine_id() -> Option<String> {
+        let mut f = match File::open("/etc/machine-id").await {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("/etc/machine-id not found, not generate systemd id based on it");
+                return None;
+            }
+            Err(e) => {
+                warn!("Failed to open machine-id: {e}");
+                return None;
+            }
+        };
+
+        let mut id = [0u8; 32];
+        if let Err(e) = f.read_exact(&mut id).await {
+            warn!("Failed to read from machine-id: {e}");
+            return None;
+        };
+
+        // Infallible as a hmac can take a key of any size
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&id).unwrap();
+        mac.update(b"gitlab-runner");
+
+        let mut system_id = String::from("s_");
+        // 2 hex chars for each byte
+        for b in &mac.finalize().into_bytes()[0..Self::DEFAULT_ID_LEN / 2] {
+            // Infallible: writing to a string
+            write!(&mut system_id, "{:02x}", b).unwrap();
+        }
+        Some(system_id)
+    }
+
+    async fn generate_system_id() -> String {
+        if let Some(system_id) = Self::generate_system_id_from_machine_id().await {
+            system_id
+        } else {
+            let mut system_id = String::from("r_");
+            Alphanumeric.append_string(
+                &mut rand::thread_rng(),
+                &mut system_id,
+                Self::DEFAULT_ID_LEN,
+            );
+            system_id
+        }
+    }
+
+    /// Build the runner.
+    pub async fn build(self) -> Runner {
+        let system_id = match self.system_id {
+            Some(system_id) => system_id,
+            None => Self::generate_system_id().await,
+        };
+        let client = Client::new(self.server, self.token, system_id);
+        Runner {
+            client,
+            build_dir: self.build_dir,
+            run_list: self.run_list,
+        }
+    }
+}
+
 /// Runner for gitlab
 ///
 /// The runner is responsible for communicating with gitlab to request new job and spawn them.
@@ -285,45 +421,6 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Create a new Runner for the given server url and runner token, storing (temporary job
-    /// files) in build_dir
-    ///
-    /// The build_dir is used to store temporary files during a job run. This will also configure a
-    /// default tracing subscriber if that's not wanted use [`Runner::new_with_layer`] instead.
-    ///
-    /// ```
-    /// # use gitlab_runner::{GitlabLayer, Runner};
-    /// # use tracing_subscriber::prelude::*;
-    /// # use url::Url;
-    /// #
-    ///
-    /// let (layer, jobs) = GitlabLayer::new();
-    ///     tracing_subscriber::Registry::default()
-    ///        .with(
-    ///           tracing_subscriber::fmt::Layer::new()
-    ///                .pretty()
-    ///                .with_filter(tracing::metadata::LevelFilter::INFO),
-    ///        )
-    ///        .with(layer)
-    ///        .init();
-    /// let dir = tempfile::tempdir().unwrap();
-    /// let runner = Runner::new(Url::parse("https://gitlab.com/").unwrap(),
-    ///     "RunnerToken".to_string(),
-    ///     dir.path().to_path_buf(),
-    ///     jobs);
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if a default subscriber is already setup
-    pub fn new(server: Url, token: String, build_dir: PathBuf, jobs: JobRunList) -> Self {
-        Self {
-            client: Client::new(server, token),
-            build_dir,
-            run_list: jobs.inner(),
-        }
-    }
-
     /// The number of jobs currently running
     pub fn running(&self) -> usize {
         self.run_list.size()
@@ -336,7 +433,7 @@ impl Runner {
     /// the actual job handler. Returns whether or not a job was received or an error if polling
     /// gitlab failed.
     ///
-    /// Note that this function is not cancel save. If the future gets cancelled gitlab might have
+    /// Note that this function is not cancel safe. If the future gets cancelled gitlab might have
     /// provided a job for which processing didn't start yet.
     pub async fn request_job<F, J, U, Ret>(&mut self, process: F) -> Result<bool, client::Error>
     where
