@@ -1,7 +1,10 @@
 use tracing::{field, metadata::LevelFilter, Subscriber};
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::{job::JobLog, runlist::RunList};
+use crate::{
+    job::JobLog,
+    runlist::{JobRunList, RunList},
+};
 
 #[derive(Clone, Debug)]
 struct GitlabJob(u64);
@@ -59,8 +62,19 @@ pub struct GitlabLayer {
 }
 
 impl GitlabLayer {
-    pub(crate) fn new(run_list: RunList<u64, JobLog>) -> Self {
-        GitlabLayer { run_list }
+    /// Create a new GitlabLayer which should be added to the global subscriber
+    /// and a jobs list which should be added to the runner
+    /// ```
+    /// # use gitlab_runner::GitlabLayer;
+    /// # use tracing_subscriber::{prelude::*, Registry};
+    /// #
+    /// let (layer, _jobs) = GitlabLayer::new();
+    /// let subscriber = Registry::default().with(layer).init();
+    /// ```
+    pub fn new() -> (Self, JobRunList) {
+        let run_list = RunList::new();
+        let jobs = JobRunList::from(run_list.clone());
+        (GitlabLayer { run_list }, jobs)
     }
 }
 

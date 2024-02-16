@@ -12,7 +12,8 @@
 //! runner can be implement as such:
 //!
 //! ```rust,no_run
-//! use gitlab_runner::{outputln, Runner, JobHandler, JobResult, Phase};
+//! use gitlab_runner::{outputln, GitlabLayer, Runner, JobHandler, JobResult, Phase};
+//! use tracing_subscriber::prelude::*;
 //! use std::path::PathBuf;
 //!
 //! #[derive(Debug)]
@@ -31,10 +32,20 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
+//!     let (layer, jobs) = GitlabLayer::new();
+//!     tracing_subscriber::Registry::default()
+//!        .with(
+//!           tracing_subscriber::fmt::layer()
+//!                .pretty()
+//!                .with_filter(tracing::metadata::LevelFilter::INFO),
+//!        )
+//!        .with(layer)
+//!        .init();
 //!     let mut runner = Runner::new(
 //!         "https://gitlab.example.com".try_into().unwrap(),
 //!         "runner token".to_owned(),
-//!         PathBuf::from("/tmp"));
+//!         PathBuf::from("/tmp"),
+//!         jobs);
 //!     runner.run(move | _job | async move { Ok(Run{})  }, 16).await.unwrap();
 //! }
 //! ```
@@ -74,6 +85,7 @@ pub mod job;
 use job::{Job, JobLog};
 pub mod uploader;
 pub use logging::GitlabLayer;
+use runlist::JobRunList;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
 pub use uploader::UploadFile;
@@ -86,8 +98,6 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
-use tracing_subscriber::{prelude::*, Registry};
-
 use url::Url;
 
 #[doc(hidden)]
@@ -282,52 +292,36 @@ impl Runner {
     /// default tracing subscriber if that's not wanted use [`Runner::new_with_layer`] instead.
     ///
     /// ```
-    /// # use gitlab_runner::Runner;
+    /// # use gitlab_runner::{GitlabLayer, Runner};
+    /// # use tracing_subscriber::prelude::*;
     /// # use url::Url;
     /// #
+    ///
+    /// let (layer, jobs) = GitlabLayer::new();
+    ///     tracing_subscriber::Registry::default()
+    ///        .with(
+    ///           tracing_subscriber::fmt::Layer::new()
+    ///                .pretty()
+    ///                .with_filter(tracing::metadata::LevelFilter::INFO),
+    ///        )
+    ///        .with(layer)
+    ///        .init();
     /// let dir = tempfile::tempdir().unwrap();
     /// let runner = Runner::new(Url::parse("https://gitlab.com/").unwrap(),
     ///     "RunnerToken".to_string(),
-    ///     dir.path().to_path_buf());
+    ///     dir.path().to_path_buf(),
+    ///     jobs);
     /// ```
     ///
     /// # Panics
     ///
     /// Panics if a default subscriber is already setup
-    pub fn new(server: Url, token: String, build_dir: PathBuf) -> Self {
-        let (runner, layer) = Self::new_with_layer(server, token, build_dir);
-        Registry::default().with(layer).init();
-
-        runner
-    }
-
-    /// Creates a new runner as per [`Runner::new`] and logging layer
-    ///
-    /// The logging layer should attached to the current tracing subscriber while further runner
-    /// calls are made otherwise job logging to gitlab will not work
-    ///
-    /// ```
-    /// # use gitlab_runner::Runner;
-    /// # use url::Url;
-    /// # use tracing_subscriber::{prelude::*, Registry};
-    /// #
-    /// let dir = tempfile::tempdir().unwrap();
-    /// let (runner, layer) = Runner::new_with_layer(Url::parse("https://gitlab.com/").unwrap(),
-    ///     "RunnerToken".to_string(),
-    ///     dir.path().to_path_buf());
-    /// let subscriber = Registry::default().with(layer).init();
-    /// ```
-    pub fn new_with_layer(server: Url, token: String, build_dir: PathBuf) -> (Self, GitlabLayer) {
-        let client = Client::new(server, token);
-        let run_list = RunList::new();
-        (
-            Self {
-                client,
-                build_dir,
-                run_list: run_list.clone(),
-            },
-            GitlabLayer::new(run_list),
-        )
+    pub fn new(server: Url, token: String, build_dir: PathBuf, jobs: JobRunList) -> Self {
+        Self {
+            client: Client::new(server, token),
+            build_dir,
+            run_list: jobs.inner(),
+        }
     }
 
     /// The number of jobs currently running

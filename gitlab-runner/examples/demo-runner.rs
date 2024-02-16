@@ -4,7 +4,7 @@ use std::io::Read;
 use futures::io::Cursor;
 use futures::AsyncRead;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner, UploadableFile};
+use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner, UploadableFile};
 use serde::Deserialize;
 use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
@@ -189,8 +189,7 @@ async fn main() {
     let opts = Opts::from_args();
     let dir = tempfile::tempdir().unwrap();
 
-    let (mut runner, layer) =
-        Runner::new_with_layer(opts.server, opts.token, dir.path().to_path_buf());
+    let (layer, jobs) = GitlabLayer::new();
 
     tracing_subscriber::Registry::default()
         .with(
@@ -202,6 +201,8 @@ async fn main() {
         .init();
 
     info!("Using {} as build storage prefix", dir.path().display());
+
+    let mut runner = Runner::new(opts.server, opts.token, dir.path().to_path_buf(), jobs);
 
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
