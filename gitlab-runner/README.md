@@ -13,7 +13,8 @@ JobHandler trait, which gets calle during job executation. An absolute minimal
 runner can be implement as such:
 
 ```rust,no_run
-use gitlab_runner::{outputln, Runner, JobHandler, JobResult, Phase};
+use gitlab_runner::{outputln, GitlabLayer, RunnerBuilder, JobHandler, JobResult, Phase};
+use tracing_subscriber::prelude::*;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -32,10 +33,23 @@ impl JobHandler for Run {
 
 #[tokio::main]
 async fn main() {
-    let mut runner = Runner::new(
-        "https://gitlab.example.com".try_into().unwrap(),
-        "runner token".to_owned(),
-        PathBuf::from("/tmp"));
+    let (layer, jobs) = GitlabLayer::new();
+    tracing_subscriber::Registry::default()
+        .with(
+            tracing_subscriber::fmt::Layer::new()
+               .pretty()
+               .with_filter(tracing::metadata::LevelFilter::INFO),
+        )
+        .with(layer)
+        .init();
+    let mut runner = RunnerBuilder::new(
+        "https://gitlab.example.com".try_into().expect("failed to parse url"),
+        "runner token",
+        "/tmp",
+        jobs
+    )
+    .build()
+    .await;
     runner.run(move | _job | async move { Ok(Run{})  }, 16).await.unwrap();
 }
 ```
