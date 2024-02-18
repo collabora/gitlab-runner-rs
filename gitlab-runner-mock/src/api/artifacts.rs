@@ -1,7 +1,8 @@
+use std::convert::Infallible;
+
 use http::header::CONTENT_TYPE;
 use http::StatusCode;
-use multipart::server::Multipart;
-use std::io::Read;
+use multer::Multipart;
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
 
@@ -44,47 +45,52 @@ impl Respond for JobArtifactsUploader {
                     .get(&CONTENT_TYPE)
                     .expect("Missing content type");
 
-                let boundary = ct
-                    .to_str()
-                    .expect("Invalid content type header value")
-                    .split_once("boundary=")
-                    .map(|x| x.1)
-                    .expect("Missing boundary");
-
-                let mut multipart =
-                    Multipart::with_body(std::io::Cursor::new(&request.body), boundary);
+                let boundary = ct.to_str().expect("Invalid content type header value");
+                let boundary = multer::parse_boundary(boundary).expect("Failed to parse boundary");
+                let mut multipart = Multipart::new(
+                    futures::stream::iter(
+                        request
+                            .body
+                            .chunks(1024)
+                            .map(|chunk| Ok::<_, Infallible>(Vec::from(chunk))),
+                    ),
+                    boundary,
+                );
 
                 let mut filename = None;
                 let mut data = Vec::new();
-                let mut artifact_type = None;
-                let mut artifact_format = None;
-                while let Some(mut part) = multipart.read_entry().unwrap() {
-                    match &*part.headers.name {
-                        "file" => {
-                            filename = part.headers.filename.clone();
-                            part.data
-                                .read_to_end(&mut data)
-                                .expect("failed to read multipart data");
-                        }
-                        "artifact_format" => {
-                            let mut value = String::new();
-                            part.data
-                                .read_to_string(&mut value)
-                                .expect("failed to read artifact format");
-                            artifact_format = Some(value);
-                        }
-                        "artifact_type" => {
-                            let mut value = String::new();
-                            part.data
-                                .read_to_string(&mut value)
-                                .expect("failed to read artifact type");
-                            artifact_type = Some(value);
-                        }
-                        _ => {
-                            unimplemented!("Unknown field in request: {}", &*part.headers.name);
+                let mut artifact_type: Option<String> = None;
+                let mut artifact_format: Option<String> = None;
+
+                // All inputs are non-blocking, so this actually never blocks or waits on anything
+                // external.
+                futures::executor::block_on(async {
+                    while let Some(field) = multipart.next_field().await.unwrap() {
+                        match field.name().expect("Field without a name") {
+                            "file" => {
+                                filename = field.file_name().map(String::from);
+                                data = field
+                                    .bytes()
+                                    .await
+                                    .expect("failed to read multipart data")
+                                    .to_vec();
+                            }
+                            "artifact_format" => {
+                                let value =
+                                    field.text().await.expect("failed to read artifact format");
+                                artifact_format = Some(value);
+                            }
+                            "artifact_type" => {
+                                let value =
+                                    field.text().await.expect("failed to read artifact type");
+                                artifact_type = Some(value);
+                            }
+                            name => {
+                                unimplemented!("Unknown field in request: {}", name);
+                            }
                         }
                     }
-                }
+                });
                 job.add_artifact(
                     filename,
                     data,
