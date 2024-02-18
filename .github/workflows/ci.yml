@@ -16,7 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@master # avoid the tag here to prevent dependabot from updating it
+        with:
+            toolchain: "1.70"
       - run: cargo check --all-targets --all-features
 
   fmt:
@@ -24,9 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@master # avoid the tag here to prevent dependabot from updating it
         with:
-          components: rustfmt
+            toolchain: "1.70"
+            components: rustfmt
       - run: cargo fmt --all --check
 
   test:
@@ -34,7 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@master # avoid the tag here to prevent dependabot from updating it
+        with:
+            toolchain: "1.70"
       - run: cargo test --all-targets --all-features
 
   clippy:
@@ -42,9 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@master # avoid the tag here to prevent dependabot from updating it
         with:
-          components: clippy
+            toolchain: "1.70"
+            components: clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   clippy-latest:
