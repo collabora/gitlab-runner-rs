@@ -34,11 +34,20 @@ impl JobHandler for Run {
 #[tokio::main]
 async fn main() {
     let (layer, jobs) = GitlabLayer::new();
+
+    // By default show logs from my_runner and warnings, the gitlab_runner::gitlab::job span which
+    // sets the gitlab.job field is always enabled regardless of the over all log level.
+    let env = std::env::var("RUNNER_LOG").unwrap_or_else(|_| "my_runner=info,warn".to_string());
+    let envfilter = tracing_subscriber::EnvFilter::builder()
+        .parse(env)
+        .unwrap_or_else(|| panic!("Failed to parse RUNNER_LOG env var: {env}"))
+        .add_directive("gitlab_runner::gitlab::job=error".parse().unwrap());
+
     tracing_subscriber::Registry::default()
         .with(
             tracing_subscriber::fmt::Layer::new()
                .pretty()
-               .with_filter(tracing::metadata::LevelFilter::INFO),
+               .with_filter(envfilter),
         )
         .with(layer)
         .init();
@@ -50,9 +59,14 @@ async fn main() {
     )
     .build()
     .await;
-    runner.run(move | _job | async move { Ok(Run{})  }, 16).await.unwrap();
+    runner.run(move | _job | async move { Ok(Run{}) }, 16).await.unwrap();
 }
 ```
+
+When setting up the tracing subscriber only per-layer filtering should be used,
+to ensure logs intended for gitlab don't get filtered out. For other logging
+outputs the `gitlab_runner::gitlab::job` target should always be enabled to
+get the gitlab.job field which contains the gitlab job id.
 
 ## Gitlab runner creation
 
