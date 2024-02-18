@@ -1,3 +1,4 @@
+use http::StatusCode;
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
 
@@ -25,39 +26,44 @@ impl Respond for JobTraceResponder {
             .parse()
             .unwrap();
 
-        let token = if let Some(header) = request.headers.get(&"JOB-TOKEN".into()) {
-            header[0].as_str()
+        let token = if let Some(header) = request.headers.get("JOB-TOKEN") {
+            header.to_str().expect("Invalid JOB-TOKEN value")
         } else {
-            return ResponseTemplate::new(403);
+            return ResponseTemplate::new(StatusCode::FORBIDDEN);
         };
 
-        let (start, end) = if let Some(range) = request.headers.get(&"Content-Range".into()) {
-            let mut split = range[0].as_str().splitn(2, '-');
+        let (start, end) = if let Some(range) = request.headers.get("Content-Range") {
+            let mut split = range
+                .to_str()
+                .expect("Invalid Content-Range value")
+                .splitn(2, '-');
             let start = split.next().unwrap().parse().unwrap();
             let end = split.next().unwrap().parse().unwrap();
             (start, end)
         } else {
-            return ResponseTemplate::new(400);
+            return ResponseTemplate::new(StatusCode::BAD_REQUEST);
         };
 
         if let Some(job) = self.mock.get_job(id) {
             if token != job.token() {
-                ResponseTemplate::new(403)
+                ResponseTemplate::new(StatusCode::FORBIDDEN)
             } else if job.state() != MockJobState::Running {
-                ResponseTemplate::new(403).insert_header("Job-Status", &*job.state().to_string())
+                ResponseTemplate::new(StatusCode::FORBIDDEN)
+                    .insert_header("Job-Status", &*job.state().to_string())
             } else {
                 match job.append_log(request.body.clone(), start, end) {
-                    Ok(()) => ResponseTemplate::new(202)
+                    Ok(()) => ResponseTemplate::new(StatusCode::ACCEPTED)
                         .insert_header(
                             "X-GitLab-Trace-Update-Interval",
                             &*self.mock.update_interval().to_string(),
                         )
                         .insert_header("Job-Status", &*job.state().to_string()),
-                    Err(e) => ResponseTemplate::new(416).set_body_string(format!("{:?}", e)),
+                    Err(e) => ResponseTemplate::new(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .set_body_string(format!("{:?}", e)),
                 }
             }
         } else {
-            ResponseTemplate::new(404)
+            ResponseTemplate::new(StatusCode::NOT_FOUND)
         }
     }
 }

@@ -1,3 +1,4 @@
+use http::StatusCode;
 use serde::Deserialize;
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
@@ -35,23 +36,23 @@ impl Respond for JobUpdateResponder {
 
         if let Some(job) = self.mock.get_job(id) {
             if r.token != job.token() {
-                ResponseTemplate::new(403)
+                ResponseTemplate::new(StatusCode::FORBIDDEN)
             } else {
                 let r = match (job.state(), r.state) {
                     (MockJobState::Running, MockJobState::Success) => {
                         job.update_state(r.state);
-                        ResponseTemplate::new(200)
+                        ResponseTemplate::new(StatusCode::OK)
                     }
                     (MockJobState::Running, MockJobState::Failed) => {
                         job.update_state(r.state);
-                        ResponseTemplate::new(200)
+                        ResponseTemplate::new(StatusCode::OK)
                     }
                     (MockJobState::Running, MockJobState::Running) => {
                         job.update_state(r.state);
-                        ResponseTemplate::new(200)
+                        ResponseTemplate::new(StatusCode::OK)
                     }
                     (current_state, _) if current_state != MockJobState::Running => {
-                        ResponseTemplate::new(403)
+                        ResponseTemplate::new(StatusCode::FORBIDDEN)
                     }
                     _ => panic!("Invalid state change"),
                 };
@@ -59,7 +60,7 @@ impl Respond for JobUpdateResponder {
                 r.append_header("Job-Status", &*job.state().to_string())
             }
         } else {
-            ResponseTemplate::new(404)
+            ResponseTemplate::new(StatusCode::NOT_FOUND)
         }
     }
 }

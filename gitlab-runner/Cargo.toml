@@ -15,7 +15,7 @@ readme = "../README.md"
 flate2 = "1.0.22"
 glob = "0.3"
 reqwest = { version = "0.11.3", features = [ "json", "multipart", "stream" ] }
-tokio = { version = "1.13.0", features = [ "full" ] }
+tokio = { version = "1.35.0", features = [ "full" ] }
 url = "2.2.1"
 serde = { version = "1.0.125", features = [ "derive" ] }
 serde_json = "1.0.64"
@@ -28,15 +28,15 @@ async-trait = "0.1.50"
 tempfile = "3.2.0"
 parking_lot = "0.12.0"
 tracing-subscriber = "0.3.8"
-tracing = "0.1.30"
+tracing = "0.1.40"
 doc-comment = "0.3.3"
-tokio-util = { version = "0.7", features = [ "io" ] }
 sha2 = "0.10.8"
 hmac = "0.12.1"
 rand = "0.8.5"
+tokio-util = { version = "0.7.10", features = [ "io" ] }
 
 [dev-dependencies]
-tokio = { version = "1.13.0", features = [ "full", "test-util" ] }
+tokio = { version = "1.35.0", features = [ "full", "test-util" ] }
 gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.0.8" }
 structopt = "0.3.21"
 futures = "0.3.15"
