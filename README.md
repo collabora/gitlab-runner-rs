@@ -40,28 +40,31 @@ async fn main() {
 }
 ```
 
-## Gitlab runner registration
+## Gitlab runner creation
 
-This crate does not support registering new runners with the gitlab server, so this has to be
-done by hand using the gitlab
-[runner registration API](https://docs.gitlab.com/ee/api/runners.html#register-a-new-runner).
+This crate does not support creating new runners on the GitLab server. This can
+be done using the
+[runner creation API](https://docs.gitlab.com/ee/api/users.html#create-a-runner-linked-to-a-user),
+or manually in the GitLab
+[runner management web interface](https://docs.gitlab.com/ee/ci/runners/runners_scope.html).
+Make sure to follow the runner creation with an authentication token workflow,
+as the registration token workflow is deprecated.
 
-The registration token can be retrieved from the runners section in the Gitlab
-administration area. With that token the runner can be register using a curl
-command like:
-```shell
-curl --request POST "https://GITLAB_URL/api/v4/runners"  \
-  --form "description=My custom runner" \
-  --form "run_untagged=false" \
-  --form "tag_list=custom-gitlab-runner" \
-  --form "token=REGISTRATION_TOKEN"
-```
-
-As a response to this command a new token for the registered runner will be
-provided, this token should be provided to the runner for it's gitlab
-connection.
-
-One thing to key parameter provided here is `run_untagged=false`, which will
-make the runner *only* pickup jobs which matches its tag. This is important to
+One key parameter provided when creating the runner is `run_untagged=false` (or
+leaving the `Run untagged jobs` box unchecked in the web interface), which will
+make the runner *only* pickup jobs which matches its tags. This is important to
 prevent the runner from picking up "normal" jobs which it will not be able to
 process.
+
+When the runner is created GitLab provides an authentication token starting
+with `glrt-`. This token should be provided to the runner for its GitLab
+connection.
+
+The token can be verified using a curl command like:
+
+```shell
+curl --request POST "https://GITLAB_URL/api/v4/runners/verify"  \
+  --form "token=AUTHENTICATION_TOKEN"
+```
+
+This step is optional.

@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use parking_lot::RwLock;
 use tokio::sync::watch;
 
+use crate::job::JobLog;
+
 #[derive(Debug)]
 pub(crate) struct RunListEntry<K, V>
 where
@@ -51,7 +53,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RunList<K, V> {
+pub struct RunList<K, V> {
     inner: Arc<Inner<K, V>>,
     size: watch::Receiver<usize>,
 }
@@ -101,6 +103,20 @@ where
     pub(crate) fn lookup(&self, id: &K) -> Option<V> {
         let r = self.inner.rundata.read();
         r.get(id).cloned()
+    }
+}
+
+pub struct JobRunList(RunList<u64, JobLog>);
+
+impl From<RunList<u64, JobLog>> for JobRunList {
+    fn from(value: RunList<u64, JobLog>) -> Self {
+        JobRunList(value)
+    }
+}
+
+impl JobRunList {
+    pub(crate) fn inner(self) -> RunList<u64, JobLog> {
+        self.0
     }
 }
 

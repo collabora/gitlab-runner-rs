@@ -33,6 +33,7 @@ struct VersionInfo {
 #[derive(Deserialize)]
 pub(crate) struct JobRequest {
     token: String,
+    system_id: String,
     #[serde(default)]
     info: VersionInfo,
 }
@@ -54,6 +55,10 @@ impl Respond for JobRequestResponder {
         if r.token != self.mock.runner_token() {
             return ResponseTemplate::new(403);
         }
+
+        // Assert system_id is formatted roughly similar to gitlab-runner.
+        assert!(r.system_id.starts_with("s_") || r.system_id.starts_with("r_"));
+        assert!(r.system_id.len() == 14);
 
         if !r.info.features.refspecs {
             return ResponseTemplate::new(StatusCode::NoContent);

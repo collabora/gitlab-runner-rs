@@ -3,11 +3,14 @@ use std::pin::Pin;
 // Test the interaction intervals with the backend as driver by the runhandler
 //
 use gitlab_runner::job::Job;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJob, MockJobState};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
 
 struct Completion(oneshot::Receiver<()>);
 
@@ -183,64 +186,68 @@ async fn update_interval() {
     let job = mock.add_dummy_job("logging".to_string());
 
     let dir = tempfile::tempdir().unwrap();
-    let mut runner = Runner::new(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
+    let (layer, jobs) = GitlabLayer::new();
+    let subscriber = Registry::default().with(layer);
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
 
-    let (control, rx) = LoggerControl::new();
+    async {
+        let (control, rx) = LoggerControl::new();
 
-    let got_job = runner
-        .request_job(|job| async move { Ok(Logger::new(job, rx)) })
-        .await
-        .unwrap();
-    assert!(got_job);
+        let got_job = runner
+            .request_job(|job| async move { Ok(Logger::new(job, rx)) })
+            .await
+            .unwrap();
+        assert!(got_job);
 
-    let mut patches = 0;
-    // Ping the logger which guarantees the job is fully started as well as getting the logging
-    // loop back into a known point.
-    patches = log_ping(&job, &control, patches).await;
+        let mut patches = 0;
+        // Ping the logger which guarantees the job is fully started as well as getting the logging
+        // loop back into a known point.
+        patches = log_ping(&job, &control, patches).await;
 
-    // Default interval is 3, so do a bit more seconds
-    let interval = Duration::from_secs(4);
-    patches = log_batch(&job, &control, patches, interval).await;
-    patches = log_batch(&job, &control, patches, interval).await;
-    patches = log_batch(&job, &control, patches, interval).await;
+        // Default interval is 3, so do a bit more seconds
+        let interval = Duration::from_secs(4);
+        patches = log_batch(&job, &control, patches, interval).await;
+        patches = log_batch(&job, &control, patches, interval).await;
+        patches = log_batch(&job, &control, patches, interval).await;
 
-    // First state update was pending -> running
-    assert_eq!(job.state_updates(), 1);
+        // First state update was pending -> running
+        assert_eq!(job.state_updates(), 1);
 
-    // After 30 seconds of not sending logs a job update should be sent
-    tokio::time::advance(Duration::from_secs(40)).await;
-    busy_wait(|| job.state_updates() == 1).await;
-    assert_eq!(job.state_updates(), 2);
-    assert_eq!(job.log_patches(), patches);
+        // After 30 seconds of not sending logs a job update should be sent
+        tokio::time::advance(Duration::from_secs(40)).await;
+        busy_wait(|| job.state_updates() == 1).await;
+        assert_eq!(job.state_updates(), 2);
+        assert_eq!(job.log_patches(), patches);
 
-    // Check one log attempt to make sure the intervals aren't trying to catch up
-    patches = log_batch(&job, &control, patches, interval).await;
+        // Check one log attempt to make sure the intervals aren't trying to catch up
+        patches = log_batch(&job, &control, patches, interval).await;
 
-    // Update interval and then send another trace; the new trace will get the update interval
-    mock.set_update_interval(30);
-    patches = log_batch(&job, &control, patches, interval).await;
+        // Update interval and then send another trace; the new trace will get the update interval
+        mock.set_update_interval(30);
+        patches = log_batch(&job, &control, patches, interval).await;
 
-    let interval = Duration::from_secs(30);
-    patches = log_batch(&job, &control, patches, interval).await;
-    assert_eq!(job.log_patches(), patches);
-    assert_eq!(job.state_updates(), 2);
+        let interval = Duration::from_secs(30);
+        patches = log_batch(&job, &control, patches, interval).await;
+        assert_eq!(job.log_patches(), patches);
+        assert_eq!(job.state_updates(), 2);
 
-    /* Trigger another keepalive by jumping more then the period and more then the default
-     * keepalive of 30 seconds  */
-    tokio::time::advance(Duration::from_secs(40)).await;
-    busy_wait(|| job.state_updates() == 2).await;
+        /* Trigger another keepalive by jumping more then the period and more then the default
+         * keepalive of 30 seconds  */
+        tokio::time::advance(Duration::from_secs(40)).await;
+        busy_wait(|| job.state_updates() == 2).await;
 
-    assert_eq!(job.state_updates(), 3);
-    assert_eq!(job.log_patches(), patches);
+        assert_eq!(job.state_updates(), 3);
+        assert_eq!(job.log_patches(), patches);
 
-    /* and back to normal */
-    tokio::time::resume();
-    control.finish(Ok(())).await;
+        /* and back to normal */
+        tokio::time::resume();
+        control.finish(Ok(())).await;
 
-    runner.wait_for_space(1).await;
-    assert_eq!(MockJobState::Success, job.state());
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
 }

@@ -8,7 +8,7 @@ use tracing_subscriber::Registry;
 use zip::ZipArchive;
 
 use gitlab_runner::job::Job;
-use gitlab_runner::{JobHandler, JobResult, Phase, Runner, UploadableFile};
+use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJobArtifactWhen, MockJobState, MockJobStepName, MockJobStepWhen,
 };
@@ -128,15 +128,14 @@ async fn upload_download() {
     let download = download.build();
 
     mock.enqueue_job(download.clone());
+
     let dir = tempfile::tempdir().unwrap();
-
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
+    let (layer, jobs) = GitlabLayer::new();
     let subscriber = Registry::default().with(layer);
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
+
     async {
         // Upload job comes first
         let got_job = runner
@@ -210,14 +209,12 @@ async fn multiple_upload() {
     mock.enqueue_job(download.clone());
 
     let dir = tempfile::tempdir().unwrap();
-
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
+    let (layer, jobs) = GitlabLayer::new();
     let subscriber = Registry::default().with(layer);
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
+
     async {
         let got_job = runner
             .request_job(|_job| async move { Ok(Upload()) })

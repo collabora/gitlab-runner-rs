@@ -1,13 +1,15 @@
 use futures::future;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, JobHandler, JobResult, Phase, Runner};
+use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBuilder};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 use tracing::instrument::WithSubscriber;
+use tracing::Subscriber;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::Registry;
 
@@ -265,19 +267,24 @@ impl<T: Debug + Clone> TestJobs<T> {
     }
 }
 
+async fn setup_runner(mock: &GitlabRunnerMock) -> (Runner, impl Subscriber, TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let (layer, jobs) = GitlabLayer::new();
+    let subscriber = Registry::default()
+        .with(layer)
+        .with(tracing_subscriber::fmt::layer());
+    let runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
+    (runner, subscriber, dir)
+}
+
 #[tokio::test]
 async fn job_success() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("job success".to_string());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let got_job = runner
             .request_job(|_| SimpleRun::dummy(Ok(())))
@@ -296,14 +303,7 @@ async fn job_fail() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("fail".to_string());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let got_job = runner
             .request_job(|_job| SimpleRun::dummy(Err(())))
@@ -322,14 +322,7 @@ async fn job_panic() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("panic".to_string());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let got_job = runner
             .request_job(|_job| async {
@@ -352,16 +345,8 @@ async fn job_cancel_step() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("cancel steps".to_string());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_owned(),
-        dir.path().to_path_buf(),
-    );
-
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     let (run, mut handle) = CancellableRun::new();
-
-    let subscriber = Registry::default().with(layer);
     async {
         let got_job = runner.request_job(|_job| future::ok(run)).await.unwrap();
         assert!(got_job);
@@ -382,14 +367,7 @@ async fn job_log() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("log".to_string());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         tracing::info!("TEST");
         let got_job = runner
@@ -428,14 +406,7 @@ async fn job_steps() {
     let job = builder.build();
     mock.enqueue_job(job.clone());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let got_job = runner
             .request_job(|_ob| async move {
@@ -462,14 +433,7 @@ async fn job_parallel() {
         jobs.add_job();
     }
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         while runner
             .request_job({
@@ -519,14 +483,7 @@ async fn runner_run() {
         jobs.add_job();
     }
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut r, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut r, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let mut runner = tokio::task::spawn({
             let jobs = jobs.clone();
@@ -578,14 +535,7 @@ async fn runner_limit() {
         jobs.add_job();
     }
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut r, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut r, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let mut runner = tokio::task::spawn({
             let jobs = jobs.clone();
@@ -638,14 +588,8 @@ async fn runner_limit() {
 async fn runner_delay() {
     //tokio::time::pause();
     let mock = GitlabRunnerMock::start().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (mut r, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
 
-    let subscriber = Registry::default().with(layer);
+    let (mut r, subscriber, _dir) = setup_runner(&mock).await;
     async {
         tokio::task::spawn(async move { r.run(|_| SimpleRun::dummy(Ok(())), 1).await });
 
@@ -703,14 +647,7 @@ async fn job_variables() {
     let job = builder.build();
     mock.enqueue_job(job.clone());
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         let got_job = runner
             .request_job(|job| async move {
@@ -744,14 +681,7 @@ async fn job_drain() {
         jobs.add_job();
     }
 
-    let dir = tempfile::tempdir().unwrap();
-    let (mut runner, layer) = Runner::new_with_layer(
-        mock.uri(),
-        mock.runner_token().to_string(),
-        dir.path().to_path_buf(),
-    );
-
-    let subscriber = Registry::default().with(layer);
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
     async {
         while runner
             .request_job({
