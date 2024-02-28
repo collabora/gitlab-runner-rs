@@ -1,4 +1,4 @@
-use http_types::StatusCode;
+use http::StatusCode;
 // Required for serde_json::json macro on the massive job json
 use serde::Deserialize;
 use serde_json::json;
@@ -53,7 +53,7 @@ impl Respond for JobRequestResponder {
         let r: JobRequest = serde_json::from_slice(&request.body).unwrap();
 
         if r.token != self.mock.runner_token() {
-            return ResponseTemplate::new(403);
+            return ResponseTemplate::new(StatusCode::FORBIDDEN);
         }
 
         // Assert system_id is formatted roughly similar to gitlab-runner.
@@ -61,7 +61,7 @@ impl Respond for JobRequestResponder {
         assert!(r.system_id.len() == 14);
 
         if !r.info.features.refspecs {
-            return ResponseTemplate::new(StatusCode::NoContent);
+            return ResponseTemplate::new(StatusCode::NO_CONTENT);
         }
 
         if let Some(job) = self.mock.grab_pending_job() {
@@ -113,7 +113,7 @@ impl Respond for JobRequestResponder {
                     value
                 })
                 .collect();
-            ResponseTemplate::new(201).set_body_json(json!({
+            ResponseTemplate::new(StatusCode::CREATED).set_body_json(json!({
                 "id": job.id(),
                 "token": job.token(),
                 "allow_git_fetch": true,
@@ -191,7 +191,7 @@ impl Respond for JobRequestResponder {
                 }
             }))
         } else {
-            ResponseTemplate::new(StatusCode::NoContent)
+            ResponseTemplate::new(StatusCode::NO_CONTENT)
         }
     }
 }
