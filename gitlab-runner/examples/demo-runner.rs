@@ -1,6 +1,7 @@
 use std::borrow::Cow;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 
+use anyhow::{Context, Result};
 use futures::io::Cursor;
 use futures::AsyncRead;
 use gitlab_runner::job::Job;
@@ -187,18 +188,30 @@ impl JobHandler<DemoFile> for Run {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let opts = Opts::from_args();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().context("Failed to create temporary directory for builds")?;
 
     let (layer, jobs) = GitlabLayer::new();
 
+    let env = std::env::var("RUNNER_LOG").unwrap_or_else(|_| "demo_runner=info,warn".to_string());
+
+    // Always enable the gitlab_runner::job span specifically as provides the gitlab.job field to
+    // correlate gitlab jobs to log entries
+    let envfilter = tracing_subscriber::EnvFilter::builder()
+        .parse(&env)
+        .with_context(|| format!("Failed to parse env filter: {env}"))?
+        .add_directive("gitlab_runner::gitlab::job=error".parse().unwrap());
+
+    let fmt = tracing_subscriber::fmt::Layer::new();
+    let fmt = if std::io::stdout().is_terminal() {
+        fmt.pretty().boxed()
+    } else {
+        fmt.json().boxed()
+    };
+
     tracing_subscriber::Registry::default()
-        .with(
-            tracing_subscriber::fmt::Layer::new()
-                .pretty()
-                .with_filter(tracing::metadata::LevelFilter::INFO),
-        )
+        .with(fmt.with_filter(envfilter))
         .with(layer)
         .init();
 
@@ -231,4 +244,5 @@ async fn main() {
         _ = term.recv() => info!("Got TERM: exiting!"),
         _ = int.recv() => info!("Got INT: exiting!"),
     }
+    Ok(())
 }

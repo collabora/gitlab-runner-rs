@@ -247,7 +247,12 @@ impl Run {
         }
     }
 
-    #[tracing::instrument(skip(self, process,build_dir),fields(gitlab.job=self.response.id))]
+    // the gitlab_runner::gitlab::job target is specified for crate users to depend on; Also it's
+    // at max verbosity (error), so it always shows up regardless of level.
+    #[tracing::instrument(target = "gitlab_runner::gitlab::job",
+                          level = "error",
+                          skip_all,
+                          fields(gitlab.job=self.response.id))]
     pub(crate) async fn run<F, J, U, Ret>(&mut self, process: F, build_dir: PathBuf)
     where
         F: FnOnce(Job) -> Ret + Send + Sync + 'static,

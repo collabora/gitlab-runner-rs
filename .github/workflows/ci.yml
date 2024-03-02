@@ -72,7 +72,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
-      - run: cargo check -Z direct-minimal-versions
+      - run: cargo check -Z direct-minimal-versions --all-targets --all-features
 
   # Job to key success status against
   allgreen:
