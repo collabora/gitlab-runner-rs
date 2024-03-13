@@ -17,7 +17,7 @@ glob = "0.3"
 reqwest = { version = "0.12.0", features = [ "json", "multipart", "stream" ] }
 tokio = { version = "1.35.0", features = [ "full" ] }
 url = "2.2.1"
-serde = { version = "1.0.125", features = [ "derive" ] }
+serde = { version = "1.0.126", features = [ "derive" ] }
 serde_json = "1.0.64"
 thiserror = "1.0.24"
 bytes = "1.0.1"
@@ -42,3 +42,6 @@ gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.0.8" }
 structopt = "0.3.21"
 futures = "0.3.15"
 anyhow = "1.0.79"
+
+[build-dependencies]
+vergen = { version = "8.3.1", features = ["git", "gitcl"] }
