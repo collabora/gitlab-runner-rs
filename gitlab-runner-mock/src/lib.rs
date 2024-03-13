@@ -26,11 +26,20 @@ struct JobData {
     jobs: Vec<MockJob>,
 }
 
+#[derive(Default, Clone)]
+struct ExpectedMetadata {
+    version: Option<String>,
+    revision: Option<String>,
+    platform: Option<String>,
+    architecture: Option<String>,
+}
+
 struct Inner {
     server: MockServer,
     runner_token: String,
     jobs: Mutex<JobData>,
     update_interval: Mutex<u32>,
+    expected_metadata: Mutex<ExpectedMetadata>,
 }
 
 #[derive(Clone)]
@@ -50,6 +59,7 @@ impl GitlabRunnerMock {
             runner_token: "fakerunnertoken".to_string(),
             jobs: Mutex::new(jobs),
             update_interval: Mutex::new(3),
+            expected_metadata: Mutex::new(ExpectedMetadata::default()),
         };
         let server = Self {
             inner: Arc::new(inner),
@@ -170,5 +180,25 @@ impl GitlabRunnerMock {
 
     pub fn set_update_interval(&self, interval: u32) {
         *self.inner.update_interval.lock().unwrap() = interval;
+    }
+
+    pub(crate) fn expected_metadata(&self) -> ExpectedMetadata {
+        self.inner.expected_metadata.lock().unwrap().clone()
+    }
+
+    pub fn set_expected_metadata_version<S: Into<String>>(&self, version: S) {
+        self.inner.expected_metadata.lock().unwrap().version = Some(version.into());
+    }
+
+    pub fn set_expected_metadata_revision<S: Into<String>>(&self, revision: S) {
+        self.inner.expected_metadata.lock().unwrap().revision = Some(revision.into());
+    }
+
+    pub fn set_expected_metadata_platform<S: Into<String>>(&self, platform: S) {
+        self.inner.expected_metadata.lock().unwrap().platform = Some(platform.into());
+    }
+
+    pub fn set_expected_metadata_architecture<S: Into<String>>(&self, architecture: S) {
+        self.inner.expected_metadata.lock().unwrap().architecture = Some(architecture.into());
     }
 }
