@@ -7,6 +7,7 @@ use crate::client::Client;
 mod run;
 use crate::run::Run;
 pub mod job;
+use client::ClientMetadata;
 use hmac::Hmac;
 use hmac::Mac;
 use job::{Job, JobLog};
@@ -214,6 +215,7 @@ pub struct RunnerBuilder {
     build_dir: PathBuf,
     system_id: Option<String>,
     run_list: RunList<u64, JobLog>,
+    metadata: ClientMetadata,
 }
 
 impl RunnerBuilder {
@@ -256,6 +258,7 @@ impl RunnerBuilder {
             build_dir: build_dir.into(),
             system_id: None,
             run_list: jobs.inner(),
+            metadata: ClientMetadata::default(),
         }
     }
 
@@ -268,6 +271,46 @@ impl RunnerBuilder {
         let mut system_id = system_id.into();
         system_id.truncate(64);
         self.system_id = Some(system_id);
+        self
+    }
+
+    /// Set the version reported by the gitlab runner
+    ///
+    /// The version will be truncated to 2048 characters
+    pub fn version<S: Into<String>>(mut self, version: S) -> Self {
+        let mut version = version.into();
+        version.truncate(2048);
+        self.metadata.version = Some(version);
+        self
+    }
+
+    /// Set the revision reported by the gitlab runner
+    ///
+    /// The revision will be truncated to 255 characters
+    pub fn revision<S: Into<String>>(mut self, revision: S) -> Self {
+        let mut revision = revision.into();
+        revision.truncate(255);
+        self.metadata.revision = Some(revision);
+        self
+    }
+
+    /// Set the platform reported by the gitlab runner
+    ///
+    /// The platform will be truncated to 255 characters
+    pub fn platform<S: Into<String>>(mut self, platform: S) -> Self {
+        let mut platform = platform.into();
+        platform.truncate(255);
+        self.metadata.platform = Some(platform);
+        self
+    }
+
+    /// Set the architecture reported by the gitlab runner
+    ///
+    /// The architecture will be truncated to 255 characters
+    pub fn architecture<S: Into<String>>(mut self, architecture: S) -> Self {
+        let mut architecture = architecture.into();
+        architecture.truncate(255);
+        self.metadata.architecture = Some(architecture);
         self
     }
 
@@ -323,7 +366,7 @@ impl RunnerBuilder {
             Some(system_id) => system_id,
             None => Self::generate_system_id().await,
         };
-        let client = Client::new(self.server, self.token, system_id);
+        let client = Client::new(self.server, self.token, system_id, self.metadata);
         Runner {
             client,
             build_dir: self.build_dir,

@@ -74,7 +74,9 @@ struct FeaturesInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct VersionInfo {
+struct VersionInfo<'a> {
+    #[serde(flatten)]
+    metadata: &'a ClientMetadata,
     features: FeaturesInfo,
 }
 
@@ -82,7 +84,7 @@ struct VersionInfo {
 struct JobRequest<'a> {
     token: &'a str,
     system_id: &'a str,
-    info: VersionInfo,
+    info: VersionInfo<'a>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,21 +273,35 @@ pub(crate) struct ArtifactInfo<'a> {
     pub expire_in: Option<&'a str>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct ClientMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) platform: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) architecture: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Client {
     client: reqwest::Client,
     url: Url,
     token: String,
     system_id: String,
+    metadata: ClientMetadata,
 }
 
 impl Client {
-    pub fn new(url: Url, token: String, system_id: String) -> Self {
+    pub fn new(url: Url, token: String, system_id: String, metadata: ClientMetadata) -> Self {
         Self {
             client: reqwest::Client::new(),
             url,
             token,
             system_id,
+            metadata,
         }
     }
 
@@ -300,6 +316,7 @@ impl Client {
                     upload_multiple_artifacts: true,
                     ..Default::default()
                 },
+                metadata: &self.metadata,
             },
         };
 
@@ -533,6 +550,7 @@ mod test {
             mock.uri(),
             mock.runner_token().to_string(),
             "s_ystem_id1234".to_string(),
+            ClientMetadata::default(),
         );
 
         let job = client.request_job().await.unwrap();
@@ -549,6 +567,7 @@ mod test {
             mock.uri(),
             mock.runner_token().to_string(),
             "s_ystem_id1234".to_string(),
+            ClientMetadata::default(),
         );
 
         if let Some(job) = client.request_job().await.unwrap() {

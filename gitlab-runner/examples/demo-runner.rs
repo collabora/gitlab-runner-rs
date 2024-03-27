@@ -218,6 +218,20 @@ async fn main() -> Result<()> {
     info!("Using {} as build storage prefix", dir.path().display());
 
     let mut runner = RunnerBuilder::new(opts.server, opts.token, dir.path(), jobs)
+        .version(env!("CARGO_PKG_VERSION"))
+        .revision(
+            option_env!("VERGEN_GIT_SHA")
+                .map(|sha| {
+                    if option_env!("VERGEN_GIT_DIRTY") == Some("true") {
+                        format!("{}-dirty", sha)
+                    } else {
+                        sha.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string()),
+        )
+        .architecture("gitlab-runner-rs")
+        .platform(env!("CARGO_BIN_NAME"))
         .build()
         .await;
 

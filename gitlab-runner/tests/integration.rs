@@ -299,6 +299,41 @@ async fn job_success() {
 }
 
 #[tokio::test]
+async fn job_metadata() {
+    let mock = GitlabRunnerMock::start().await;
+    let job = mock.add_dummy_job("job success".to_string());
+    mock.set_expected_metadata_version("version-1");
+    mock.set_expected_metadata_revision("revision-2");
+    mock.set_expected_metadata_platform("platform-3");
+    mock.set_expected_metadata_architecture("architecture-4");
+
+    let dir = tempfile::tempdir().unwrap();
+    let (layer, jobs) = GitlabLayer::new();
+    let subscriber = Registry::default()
+        .with(layer)
+        .with(tracing_subscriber::fmt::layer());
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .version("version-1")
+        .revision("revision-2")
+        .platform("platform-3")
+        .architecture("architecture-4")
+        .build()
+        .await;
+
+    async {
+        let got_job = runner
+            .request_job(|_| SimpleRun::dummy(Ok(())))
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[tokio::test]
 async fn job_fail() {
     let mock = GitlabRunnerMock::start().await;
     let job = mock.add_dummy_job("fail".to_string());

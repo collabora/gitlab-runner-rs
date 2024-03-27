@@ -28,6 +28,10 @@ struct FeaturesInfo {
 struct VersionInfo {
     #[serde(default)]
     features: FeaturesInfo,
+    version: Option<String>,
+    revision: Option<String>,
+    platform: Option<String>,
+    architecture: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +63,33 @@ impl Respond for JobRequestResponder {
         // Assert system_id is formatted roughly similar to gitlab-runner.
         assert!(r.system_id.starts_with("s_") || r.system_id.starts_with("r_"));
         assert!(r.system_id.len() == 14);
+
+        let expected = self.mock.expected_metadata();
+        if let Some(expected) = expected.version {
+            let version = r.info.version.expect("Missing version in metadata");
+            assert_eq!(expected, version, "Unexpected version in metadata");
+        }
+
+        if let Some(expected) = expected.revision {
+            let revision = r.info.revision.expect("Missing revision in metadata");
+            assert_eq!(expected, revision, "Unexpected revision in metadata");
+        }
+
+        if let Some(expected) = expected.platform {
+            let platform = r.info.platform.expect("Missing platform in metadata");
+            assert_eq!(expected, platform, "Unexpected platform in metadata");
+        }
+
+        if let Some(expected) = expected.architecture {
+            let architecture = r
+                .info
+                .architecture
+                .expect("Missing architecture in metadata");
+            assert_eq!(
+                expected, architecture,
+                "Unexpected architecture in metadata"
+            );
+        }
 
         if !r.info.features.refspecs {
             return ResponseTemplate::new(StatusCode::NO_CONTENT);
