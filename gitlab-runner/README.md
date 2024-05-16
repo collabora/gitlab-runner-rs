@@ -39,8 +39,8 @@ async fn main() {
     // sets the gitlab.job field is always enabled regardless of the over all log level.
     let env = std::env::var("RUNNER_LOG").unwrap_or_else(|_| "my_runner=info,warn".to_string());
     let envfilter = tracing_subscriber::EnvFilter::builder()
-        .parse(env)
-        .unwrap_or_else(|| panic!("Failed to parse RUNNER_LOG env var: {env}"))
+        .parse(&env)
+        .unwrap_or_else(|_| panic!("Failed to parse RUNNER_LOG env var: {env}"))
         .add_directive("gitlab_runner::gitlab::job=error".parse().unwrap());
 
     tracing_subscriber::Registry::default()
