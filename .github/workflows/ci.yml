@@ -41,6 +41,7 @@ jobs:
         with:
             toolchain: "1.70"
       - run: cargo test --all-targets --all-features
+      - run: cargo test --doc
 
   clippy:
     name: cargo clippy
@@ -72,6 +73,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
+      - run: rm Cargo.lock
       - run: cargo check -Z direct-minimal-versions --all-targets --all-features
 
   # Job to key success status against
