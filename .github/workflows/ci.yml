@@ -41,6 +41,7 @@ jobs:
         with:
             toolchain: "1.70"
       - run: cargo test --all-targets --all-features
+      - run: cargo test --doc
 
   clippy:
     name: cargo clippy
