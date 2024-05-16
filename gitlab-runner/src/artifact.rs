@@ -1,7 +1,7 @@
 //! Helpers for artifacts downloaded from gitlab
 use std::{
     io::{Read, Seek},
-    path::Path,
+    path::PathBuf,
 };
 
 use zip::{read::ZipFile, result::ZipResult};
@@ -21,7 +21,7 @@ impl ArtifactFile<'_> {
     ///
     /// The path will be safe to use, that is to say it contains no NUL bytes and will be a
     /// relative path that doesn't go outside of the root.
-    pub fn path(&self) -> Option<&Path> {
+    pub fn path(&self) -> Option<PathBuf> {
         self.0.enclosed_name()
     }
 }

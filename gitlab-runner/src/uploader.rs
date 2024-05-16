@@ -38,10 +38,10 @@ enum UploadFileState<'a> {
     ),
 }
 
-fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
-    let mut zip = zip::ZipWriter::new(&mut temp);
+fn zip_thread(temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
+    let mut zip = zip::ZipWriter::new(temp);
     let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     loop {
         if let Some(request) = rx.blocking_recv() {
@@ -57,9 +57,8 @@ fn zip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
                 }
                 UploadRequest::Finish(tx) => {
                     let r = zip.finish();
-                    drop(zip);
                     let reply = match r {
-                        Ok(_) => temp.rewind().map(|()| temp),
+                        Ok(mut file) => file.rewind().map(|()| file),
                         Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                     };
                     tx.send(reply).expect("Couldn't send finished zip");
