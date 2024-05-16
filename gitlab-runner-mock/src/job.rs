@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::Arc;
 use std::sync::Mutex;
 use thiserror::Error;
@@ -23,9 +24,9 @@ impl MockJobState {
     }
 }
 
-impl ToString for MockJobState {
-    fn to_string(&self) -> String {
-        match *self {
+impl Display for MockJobState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let d = match *self {
             MockJobState::Pending => "pending",
             MockJobState::Running => "running",
             MockJobState::Success => "success",
@@ -35,8 +36,8 @@ impl ToString for MockJobState {
             // "cancelled", so using it here keeps the spelling consistent, even
             // if it's not *identical* to the exact GitLab job status.
             MockJobState::Cancelled => "canceled",
-        }
-        .to_owned()
+        };
+        write!(f, "{}", d)
     }
 }
 
