@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0](https://github/collabora/gitlab-runner-rs/compare/gitlab-runner-v0.0.9...gitlab-runner-v0.1.0) - 2024-05-17
+
+### Added
+- *(artifacts)* Update to zip 1.2
+
+### Other
+- bump dependency versions
+- Update zip requirement from 0.6.2 to 1.2.3
+- fix doc example
+
 ## [0.0.9](https://github/collabora/gitlab-runner-rs/compare/gitlab-runner-v0.0.8...gitlab-runner-v0.0.9) - 2024-04-13
 
 ### Added

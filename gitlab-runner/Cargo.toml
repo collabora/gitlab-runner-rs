@@ -1,6 +1,6 @@
 [package]
 name = "gitlab-runner"
-version = "0.0.9"
+version = "0.1.0"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -38,7 +38,7 @@ tokio-util = { version = "0.7.10", features = [ "io" ] }
 [dev-dependencies]
 tokio = { version = "1.35.0", features = [ "full", "test-util" ] }
 tracing-subscriber = { version = "0.3.10", features = ["env-filter", "json"] }
-gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.0.9" }
+gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.1.0" }
 structopt = "0.3.21"
 futures = "0.3.15"
 anyhow = "1.0.79"

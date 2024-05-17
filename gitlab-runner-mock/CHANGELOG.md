@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github/collabora/gitlab-runner-rs/compare/gitlab-runner-mock-v0.0.9...gitlab-runner-mock-v0.0.10) - 2024-05-17
+
+### Other
+- bump dependency versions
+- *(mock)* Implement Display not ToString
+
 ## [0.0.9](https://github/collabora/gitlab-runner-rs/compare/gitlab-runner-mock-v0.0.8...gitlab-runner-mock-v0.0.9) - 2024-04-13
 
 ### Fixed
