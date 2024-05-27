@@ -17,7 +17,7 @@ glob = "0.3"
 reqwest = { version = "0.12.0", features = [ "json", "multipart", "stream" ] }
 tokio = { version = "1.35.0", features = [ "full" ] }
 url = "2.2.1"
-serde = { version = "1.0.200", features = [ "derive" ] }
+serde = { version = "1.0.203", features = [ "derive" ] }
 serde_json = "1.0.64"
 thiserror = "1.0.59"
 bytes = "1.0.1"
