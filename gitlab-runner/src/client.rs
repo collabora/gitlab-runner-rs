@@ -233,6 +233,16 @@ pub(crate) struct JobDependency {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct JobGitInfo {
+    pub repo_url: String,
+    pub refspecs: Vec<String>,
+    pub sha: String,
+    pub depth: u32,
+    #[serde(flatten)]
+    unparsed: JsonValue,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct JobResponse {
     pub id: u64,
     pub token: String,
@@ -244,6 +254,7 @@ pub(crate) struct JobResponse {
     pub dependencies: Vec<JobDependency>,
     #[serde(deserialize_with = "deserialize_null_default")]
     pub artifacts: Vec<JobArtifact>,
+    pub git_info: JobGitInfo,
     #[serde(flatten)]
     unparsed: JsonValue,
 }
@@ -252,6 +263,58 @@ impl JobResponse {
     pub fn step(&self, name: Phase) -> Option<&JobStep> {
         self.steps.iter().find(|s| s.name == name)
     }
+}
+
+#[derive(Error, Debug)]
+pub enum GitCheckoutError {
+    #[error(transparent)]
+    GitClone(#[from] gix::clone::Error),
+    #[error(transparent)]
+    GitFetch(#[from] gix::clone::fetch::Error),
+    #[error(transparent)]
+    GitCheckout(#[from] gix::clone::checkout::main_worktree::Error),
+    #[error(transparent)]
+    GitIndexFileWrite(#[from] gix::index::file::write::Error),
+    #[error(transparent)]
+    GitRefValidate(#[from] gix::index::validate::reference::name::Error),
+    #[error(transparent)]
+    GitRemoteFind(#[from] gix::remote::find::existing::Error),
+    #[error(transparent)]
+    GitRemoteConnect(#[from] gix::remote::connect::Error),
+    #[error(transparent)]
+    GitRemoteFetchPrepare(#[from] gix::remote::fetch::prepare::Error),
+    #[error(transparent)]
+    GitRemoteFetch(#[from] gix::remote::fetch::Error),
+    #[error(transparent)]
+    GitObjectFind(#[from] gix::object::find::Error),
+    #[error(transparent)]
+    GitObjectPeel(#[from] gix::object::peel::to_kind::Error),
+    #[error(transparent)]
+    GitObjsFindExisting(#[from] gix::objs::find::existing::Error),
+    #[error(transparent)]
+    GitRefIterInit(#[from] gix::reference::iter::init::Error),
+    #[error(transparent)]
+    GitRefFindExisting(#[from] gix::reference::find::existing::Error),
+    #[error(transparent)]
+    GitRefFind(#[from] gix::reference::find::Error),
+    #[error(transparent)]
+    GetRefPeel(#[from] gix::reference::peel::Error),
+    #[error(transparent)]
+    GitPackedBufferOpen(#[from] gix::refs::packed::buffer::open::Error),
+    #[error(transparent)]
+    GitRefspecParse(#[from] gix::refspec::parse::Error),
+    #[error(transparent)]
+    GitHashDecode(#[from] gix::hash::decode::Error),
+    #[error(transparent)]
+    GitWorktreeCheckout(#[from] gix::worktree::state::checkout::Error),
+    #[error(transparent)]
+    GitHeadPeel(#[from] gix::head::peel::Error),
+    #[error("Job does not allow fetch")]
+    FetchNotAllowed,
+    #[error("Failed to find commit")]
+    MissingCommit,
+    #[error(transparent)]
+    Write(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
