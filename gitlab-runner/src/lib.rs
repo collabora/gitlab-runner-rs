@@ -7,7 +7,8 @@ use crate::client::Client;
 mod run;
 use crate::run::Run;
 pub mod job;
-use client::ClientMetadata;
+use client::{ClientMetadata, GitCheckoutError};
+use gix::{clone, create, index, open, progress, refspec, remote, DynNestedProgress};
 use hmac::Hmac;
 use hmac::Mac;
 use job::{Job, JobLog};
@@ -19,8 +20,8 @@ use runlist::JobRunList;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
 use tracing::instrument::WithSubscriber;
+use tracing::{debug, trace, warn};
 
 mod runlist;
 use crate::runlist::RunList;
@@ -29,9 +30,10 @@ use futures::prelude::*;
 use futures::AsyncRead;
 use std::borrow::Cow;
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use tokio::time::{sleep, Duration};
-use tracing::warn;
 use url::Url;
 
 #[doc(hidden)]
@@ -455,4 +457,149 @@ impl Runner {
             sleep(Duration::from_secs(5)).await;
         }
     }
+}
+
+// TODO: Should clone_git_repository be async
+//   gitoxide doesn't currently have async implemented for http backend
+// TODO: Is "clippy::result_large_err" the best solution to GitCheckoutError
+
+/// Fetch and checkout a given worktree
+///
+/// This creates a new path for the repo as gitoxide deletes it on failure.
+#[allow(clippy::result_large_err)]
+pub fn clone_git_repository(
+    parent_path: &Path,
+    repo_url: &str,
+    head_ref: Option<&str>,
+    refspecs: impl IntoIterator<Item = impl AsRef<str>>,
+    depth: Option<u32>,
+) -> Result<PathBuf, GitCheckoutError> {
+    let repo_dir = tempfile::Builder::new()
+        .prefix("repo_")
+        .tempdir_in(parent_path)?;
+
+    // TODO: Should we expose the ability to interrupt / report progress
+    let should_interrupt = AtomicBool::new(false);
+    let mut progress = progress::Discard;
+
+    // TODO: Is Options::isolated correct here?
+    //  The url provided from gitlab has the credentials
+    let mut fetch = clone::PrepareFetch::new(
+        repo_url,
+        repo_dir.path(),
+        create::Kind::WithWorktree,
+        Default::default(),
+        open::Options::isolated(),
+    )?;
+
+    // Specify which refspecs are fetched from remote
+    let mut refspecs = refspecs
+        .into_iter()
+        .map(|s| {
+            refspec::parse(s.as_ref().into(), refspec::parse::Operation::Fetch)
+                .map(|r| r.to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut sha = None;
+
+    if let Some(head_ref) = head_ref {
+        if let Ok(object_id) = gix::ObjectId::from_hex(head_ref.as_bytes()) {
+            // TODO: I need to specify that the sha should be fetched from remote, right?
+            //  Is there a format for a sha as a refspec?
+            if let Ok(refspec) = refspec::parse(
+                format!("+{head_ref}").as_str().into(),
+                refspec::parse::Operation::Fetch,
+            ) {
+                refspecs.push(refspec.to_owned());
+            }
+            sha = Some(object_id);
+        } else {
+            // TODO: For some reason this doesn't create refs/heads/{reference}
+            if let Ok(refspec) = refspec::parse(
+                format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}")
+                    .as_str()
+                    .into(),
+                refspec::parse::Operation::Fetch,
+            ) {
+                refspecs.push(refspec.to_owned());
+            }
+        }
+    }
+
+    if !refspecs.is_empty() {
+        let mut fetch_opts = remote::ref_map::Options::default();
+        fetch_opts.extra_refspecs.extend(refspecs);
+        fetch = fetch.with_fetch_options(fetch_opts);
+    }
+
+    if let Some(depth) = depth.and_then(NonZeroU32::new) {
+        fetch = fetch.with_shallow(remote::fetch::Shallow::DepthAtRemote(depth));
+    }
+
+    let checkout_progress = progress.add_child("checkout".to_string());
+    let (checkout, outcome) = fetch.fetch_then_checkout(checkout_progress, should_interrupt)?;
+
+    trace!("git clone fetch outcome for {repo_url}: {outcome:?}");
+
+    let repo = checkout.persist();
+
+    let root_tree_id = if let Some(sha) = sha {
+        // Checkout worktree at specific SHA
+        repo.try_find_object(sha)?
+            .ok_or(GitCheckoutError::MissingCommit)?
+    } else if let Some(reference) = head_ref {
+        repo
+            // TODO: This should be refs/heads/{reference} but it doesn't exist
+            .try_find_reference(format!("refs/remotes/origin/{reference}").as_str())?
+            .ok_or(GitCheckoutError::MissingCommit)?
+            .peel_to_id_in_place()?
+            .object()?
+    } else {
+        // Checkout head
+        repo.head()?
+            .try_peel_to_id_in_place()?
+            .ok_or(GitCheckoutError::MissingCommit)?
+            .object()?
+    };
+    let root_tree = root_tree_id.peel_to_tree()?.id;
+
+    let index =
+        index::State::from_tree(&root_tree, &repo.objects, Default::default()).map_err(|err| {
+            clone::checkout::main_worktree::Error::IndexFromTree {
+                id: root_tree,
+                source: err,
+            }
+        })?;
+
+    let workdir =
+        repo.work_dir()
+            .ok_or_else(|| clone::checkout::main_worktree::Error::BareRepository {
+                git_dir: repo.git_dir().to_owned(),
+            })?;
+
+    let files_progress = progress.add_child_with_id(
+        "files".to_string(),
+        clone::checkout::main_worktree::ProgressId::CheckoutFiles.into(),
+    );
+    let bytes_progress = progress.add_child_with_id(
+        "bytes".to_string(),
+        clone::checkout::main_worktree::ProgressId::BytesWritten.into(),
+    );
+    let mut index = index::File::from_state(index, repo.index_path());
+    let outcome = gix::worktree::state::checkout(
+        &mut index,
+        workdir,
+        repo.objects.clone().into_arc()?,
+        &files_progress,
+        &bytes_progress,
+        &should_interrupt,
+        Default::default(),
+    )?;
+
+    trace!("git clone checkout outcome for {repo_url}: {outcome:?}");
+
+    index.write(Default::default())?;
+
+    Ok(repo_dir.keep())
 }
