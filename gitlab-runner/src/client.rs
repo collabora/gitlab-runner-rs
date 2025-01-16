@@ -106,6 +106,10 @@ struct JobUpdate<'a> {
 
 #[derive(Debug, Clone)]
 pub struct JobUpdateReply {
+    // GitLabs job update endpoint can include a suggested request rate in the response's HTTP header.
+    // Currently we only use this value from trace calls (e.g. appending to the jobs log).
+    // This field is kept around to document it's existence.
+    #[allow(dead_code)]
     pub trace_update_interval: Option<Duration>,
 }
 
