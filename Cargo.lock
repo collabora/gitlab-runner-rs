@@ -580,7 +580,7 @@ dependencies = [
  "sha2",
  "structopt",
  "tempfile",
- "thiserror 1.0.60",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
@@ -599,7 +599,7 @@ dependencies = [
  "multer",
  "serde",
  "serde_json",
- "thiserror 1.0.60",
+ "thiserror",
  "url",
  "wiremock",
 ]
@@ -1632,31 +1632,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.60"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579e9083ca58dd9dcf91a9923bb9054071b9ebbd800b342194c9feb0ee89fc18"
-dependencies = [
- "thiserror-impl 1.0.60",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
 dependencies = [
- "thiserror-impl 2.0.11",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.60"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2470041c06ec3ac1ab38d0356a6119054dedaea53e12fbefc0de730a1c08524"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.96",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -2332,7 +2312,7 @@ dependencies = [
  "pbkdf2",
  "rand",
  "sha1",
- "thiserror 2.0.11",
+ "thiserror",
  "time",
  "zeroize",
  "zopfli",
