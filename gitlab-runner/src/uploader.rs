@@ -137,7 +137,7 @@ pub struct UploadFile<'a> {
     state: UploadFileState<'a>,
 }
 
-impl<'a> AsyncWrite for UploadFile<'a> {
+impl AsyncWrite for UploadFile<'_> {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

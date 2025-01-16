@@ -63,7 +63,7 @@ pub struct Dependency<'a> {
     dependency: &'a JobDependency,
 }
 
-impl<'a> Dependency<'a> {
+impl Dependency<'_> {
     /// The id of the dependency
     ///
     /// This id matches the job id of the generated this depenency
