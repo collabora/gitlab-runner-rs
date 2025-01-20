@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::io::{IsTerminal, Read};
 
 use anyhow::{Context, Result};
+use clap::Parser;
 use futures::io::Cursor;
 use futures::AsyncRead;
 use gitlab_runner::job::Job;
@@ -9,13 +10,12 @@ use gitlab_runner::{
     outputln, GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile,
 };
 use serde::Deserialize;
-use structopt::StructOpt;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 struct Opts {
     server: Url,
     token: String,
@@ -189,7 +189,7 @@ impl JobHandler<DemoFile> for Run {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     let dir = tempfile::tempdir().context("Failed to create temporary directory for builds")?;
 
     let (layer, jobs) = GitlabLayer::new();
