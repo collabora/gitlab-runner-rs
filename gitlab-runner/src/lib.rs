@@ -13,8 +13,8 @@ use hmac::Mac;
 use job::{Job, JobLog};
 pub mod uploader;
 pub use logging::GitlabLayer;
-use rand::distributions::Alphanumeric;
-use rand::distributions::DistString;
+use rand::distr::Alphanumeric;
+use rand::distr::SampleString;
 use runlist::JobRunList;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -351,11 +351,7 @@ impl RunnerBuilder {
             system_id
         } else {
             let mut system_id = String::from("r_");
-            Alphanumeric.append_string(
-                &mut rand::thread_rng(),
-                &mut system_id,
-                Self::DEFAULT_ID_LEN,
-            );
+            Alphanumeric.append_string(&mut rand::rng(), &mut system_id, Self::DEFAULT_ID_LEN);
             system_id
         }
     }
