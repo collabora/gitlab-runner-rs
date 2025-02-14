@@ -135,7 +135,7 @@ where
             let path = file.get_path();
             match uploader.file(path.to_string()).await {
                 Ok(mut upload) => {
-                    let mut data = file.get_data();
+                    let mut data = file.get_data().await?;
                     match futures::io::copy(&mut data, &mut upload).await {
                         Ok(_) => {
                             uploaded += 1;

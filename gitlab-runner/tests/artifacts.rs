@@ -29,11 +29,11 @@ impl UploadableFile for TestFile {
             TestFile::Test2 => "test2".into(),
         }
     }
-    fn get_data(&self) -> &'_ [u8] {
-        match self {
+    async fn get_data(&self) -> Result<&'_ [u8], ()> {
+        Ok(match self {
             TestFile::Test => b"testdata".as_slice(),
             TestFile::Test2 => b"testdata2".as_slice(),
-        }
+        })
     }
 }
 
