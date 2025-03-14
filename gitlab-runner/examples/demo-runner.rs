@@ -141,6 +141,7 @@ enum DemoFile {
     Fact { index: usize, value: String },
 }
 
+#[async_trait::async_trait]
 impl UploadableFile for DemoFile {
     type Data<'a> = Box<dyn AsyncRead + Send + Unpin>;
 
@@ -151,11 +152,11 @@ impl UploadableFile for DemoFile {
         }
     }
 
-    fn get_data(&self) -> Box<dyn AsyncRead + Send + Unpin> {
-        match self {
+    async fn get_data(&self) -> Result<Box<dyn AsyncRead + Send + Unpin>, ()> {
+        Ok(match self {
             DemoFile::ReadMe => Box::new(b"Demo runner artifact\n".as_slice()),
             DemoFile::Fact { value, .. } => Box::new(Cursor::new(value.clone().into_bytes())),
-        }
+        })
     }
 }
 

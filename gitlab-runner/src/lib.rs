@@ -59,6 +59,7 @@ pub use client::Phase;
 /// generated or downloaded from some other source on demand. The
 /// `get_path` method is required so that the globbing Gitlab expects
 /// can be performed without the handler needing to be involved.
+#[async_trait::async_trait]
 pub trait UploadableFile: Eq {
     /// The type of the data stream returned by
     /// [`get_data`](Self::get_data)
@@ -76,7 +77,7 @@ pub trait UploadableFile: Eq {
     /// Get something that can provide the data for this file.
     ///
     /// This can be any implementor of [`AsyncRead`].
-    fn get_data(&self) -> Self::Data<'_>;
+    async fn get_data(&self) -> Result<Self::Data<'_>, ()>;
 }
 
 /// An [`UploadableFile`] type for JobHandlers that expose no files.
@@ -87,13 +88,14 @@ pub trait UploadableFile: Eq {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NoFiles {}
 
+#[async_trait::async_trait]
 impl UploadableFile for NoFiles {
     type Data<'a> = &'a [u8];
 
     fn get_path(&self) -> Cow<'_, str> {
         unreachable!("tried to get path of NoFiles")
     }
-    fn get_data(&self) -> Self::Data<'_> {
+    async fn get_data(&self) -> Result<Self::Data<'_>, ()> {
         unreachable!("tried to read data from NoFiles");
     }
 }
