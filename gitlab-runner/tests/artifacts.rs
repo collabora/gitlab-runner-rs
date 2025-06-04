@@ -103,6 +103,8 @@ impl JobHandler for Download {
 #[tokio::test]
 async fn upload_download() {
     let mock = GitlabRunnerMock::start().await;
+    mock.set_inject_artifact_download_failures(2);
+
     let mut upload = mock.job_builder("upload artifact".to_string());
     upload.add_step(
         MockJobStepName::Script,
