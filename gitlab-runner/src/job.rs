@@ -1,10 +1,16 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
+use crate::outputln;
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tokio::{io::AsyncWrite, sync::Mutex as AsyncMutex};
+use tokio_retry2::{
+    strategy::{jitter, FibonacciBackoff},
+    Retry, RetryError,
+};
 use tracing::info;
 
 use crate::client::Error as ClientError;
@@ -63,6 +69,14 @@ pub struct Dependency<'a> {
     dependency: &'a JobDependency,
 }
 
+fn is_retriable_error(err: &ClientError) -> bool {
+    match err {
+        ClientError::Request(_) => true,
+        ClientError::UnexpectedStatus(status) => status.is_server_error(),
+        _ => false,
+    }
+}
+
 impl Dependency<'_> {
     /// The id of the dependency
     ///
@@ -91,6 +105,35 @@ impl Dependency<'_> {
         self.dependency.artifacts_file.as_ref().map(|a| a.size)
     }
 
+    async fn download_impl(
+        &self,
+        writer: Arc<AsyncMutex<impl AsyncWrite + Unpin>>,
+    ) -> Result<(), ClientError> {
+        let strategy = FibonacciBackoff::from_millis(900).map(jitter).take(4);
+        Retry::spawn(strategy, || {
+            let writer = writer.clone();
+            async move {
+                let mut writer = writer.lock().await;
+                self.job
+                    .client
+                    .download_artifact(self.dependency.id, &self.dependency.token, &mut *writer)
+                    .await
+                    .map_err(|err| {
+                        if is_retriable_error(&err) {
+                            outputln!(
+                                "Error getting artifacts from {}: {err}",
+                                self.dependency.name
+                            );
+                            RetryError::transient(err)
+                        } else {
+                            RetryError::permanent(err)
+                        }
+                    })
+            }
+        })
+        .await
+    }
+
     async fn download_to_file(&self, _file: &JobArtifactFile) -> Result<(), ClientError> {
         let mut path = self.job.build_dir.join("artifacts");
         if let Err(e) = tokio::fs::create_dir(&path).await {
@@ -101,24 +144,21 @@ impl Dependency<'_> {
 
         // TODO this assumes it's all zip artifacts
         path.push(format!("{}.zip", self.id()));
-        let mut f = tokio::fs::File::create(&path)
+        let f = tokio::fs::File::create(&path)
             .await
             .map_err(ClientError::WriteFailure)?;
-        self.job
-            .client
-            .download_artifact(self.dependency.id, &self.dependency.token, &mut f)
-            .await?;
+        self.download_impl(Arc::new(AsyncMutex::new(f))).await?;
         self.job.artifacts.insert_file(self.dependency.id, path);
         Ok(())
     }
 
     async fn download_to_mem(&self, file: &JobArtifactFile) -> Result<(), ClientError> {
-        let mut bytes = Vec::with_capacity(file.size);
-        self.job
-            .client
-            .download_artifact(self.dependency.id, &self.dependency.token, &mut bytes)
-            .await?;
-        self.job.artifacts.insert_data(self.dependency.id, bytes);
+        let bytes = Arc::new(AsyncMutex::new(Vec::with_capacity(file.size)));
+        self.download_impl(bytes.clone()).await?;
+        self.job.artifacts.insert_data(
+            self.dependency.id,
+            Arc::into_inner(bytes).unwrap().into_inner(),
+        );
         Ok(())
     }
 
