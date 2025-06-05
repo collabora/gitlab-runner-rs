@@ -29,7 +29,7 @@ impl Respond for JobUpdateResponder {
             .url
             .path_segments()
             .unwrap()
-            .last()
+            .next_back()
             .unwrap()
             .parse()
             .unwrap();

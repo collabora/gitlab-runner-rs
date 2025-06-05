@@ -48,7 +48,7 @@ fn zip_thread(temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
             match request {
                 UploadRequest::NewFile(s, tx) => {
                     let r = zip.start_file(s, options);
-                    tx.send(r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+                    tx.send(r.map_err(std::io::Error::other))
                         .expect("Couldn't send reply");
                 }
                 UploadRequest::WriteData(v, tx) => {
@@ -59,7 +59,7 @@ fn zip_thread(temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
                     let r = zip.finish();
                     let reply = match r {
                         Ok(mut file) => file.rewind().map(|()| file),
-                        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                        Err(e) => Err(std::io::Error::other(e)),
                     };
                     tx.send(reply).expect("Couldn't send finished zip");
                     return;
@@ -80,19 +80,13 @@ fn gzip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
                 .write(&mut temp, Compression::default())
         }
         Some(UploadRequest::WriteData(_, tx)) => {
-            tx.send(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "no file open",
-            )))
-            .expect("Couldn't send reply");
+            tx.send(Err(std::io::Error::other("no file open")))
+                .expect("Couldn't send reply");
             return;
         }
         Some(UploadRequest::Finish(tx)) => {
-            tx.send(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "no file open",
-            )))
-            .expect("Couldn't send reply");
+            tx.send(Err(std::io::Error::other("no file open")))
+                .expect("Couldn't send reply");
             return;
         }
         None => {
@@ -104,8 +98,7 @@ fn gzip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
         if let Some(request) = rx.blocking_recv() {
             match request {
                 UploadRequest::NewFile(_, tx) => {
-                    tx.send(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    tx.send(Err(std::io::Error::other(
                         "multiple files not permitted in gzip",
                     )))
                     .expect("Couldn't send reply");
@@ -119,7 +112,7 @@ fn gzip_thread(mut temp: File, mut rx: mpsc::Receiver<UploadRequest>) {
                     let r = gz.finish();
                     let reply = match r {
                         Ok(_) => temp.rewind().map(|()| temp),
-                        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                        Err(e) => Err(std::io::Error::other(e)),
                     };
                     tx.send(reply).expect("Couldn't send finished gzip");
                     return;
