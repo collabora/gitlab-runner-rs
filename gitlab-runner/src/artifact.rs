@@ -9,7 +9,7 @@ use zip::{read::ZipFile, result::ZipResult};
 /// A file in a gitlab artifact
 ///
 /// Most importantly this implements [`Read`] to read out the content of the file
-pub struct ArtifactFile<'a>(ZipFile<'a>);
+pub struct ArtifactFile<'a>(ZipFile<'a, Box<dyn ReadSeek + Send>>);
 
 impl ArtifactFile<'_> {
     /// Get the name of the file
