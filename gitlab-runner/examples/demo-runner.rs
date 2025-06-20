@@ -135,7 +135,6 @@ impl Run {
     }
 }
 
-#[derive(PartialEq, Eq)]
 enum DemoFile {
     ReadMe,
     Fact { index: usize, value: String },

@@ -60,7 +60,7 @@ pub use client::Phase;
 /// `get_path` method is required so that the globbing Gitlab expects
 /// can be performed without the handler needing to be involved.
 #[async_trait::async_trait]
-pub trait UploadableFile: Eq {
+pub trait UploadableFile {
     /// The type of the data stream returned by
     /// [`get_data`](Self::get_data)
     type Data<'a>: AsyncRead + Send + Unpin
