@@ -34,12 +34,19 @@ struct ExpectedMetadata {
     architecture: Option<String>,
 }
 
+#[derive(Default, Clone)]
+struct ArtifactDownloadsCounter {
+    count: u32,
+    failure_count: u32,
+}
+
 struct Inner {
     server: MockServer,
     runner_token: String,
     jobs: Mutex<JobData>,
     update_interval: Mutex<u32>,
     expected_metadata: Mutex<ExpectedMetadata>,
+    artifact_downloads_counter: Mutex<ArtifactDownloadsCounter>,
 }
 
 #[derive(Clone)]
@@ -60,6 +67,7 @@ impl GitlabRunnerMock {
             jobs: Mutex::new(jobs),
             update_interval: Mutex::new(3),
             expected_metadata: Mutex::new(ExpectedMetadata::default()),
+            artifact_downloads_counter: Mutex::new(ArtifactDownloadsCounter::default()),
         };
         let server = Self {
             inner: Arc::new(inner),
@@ -200,5 +208,13 @@ impl GitlabRunnerMock {
 
     pub fn set_expected_metadata_architecture<S: Into<String>>(&self, architecture: S) {
         self.inner.expected_metadata.lock().unwrap().architecture = Some(architecture.into());
+    }
+
+    pub fn set_inject_artifact_download_failures(&self, failure_count: u32) {
+        self.inner
+            .artifact_downloads_counter
+            .lock()
+            .unwrap()
+            .failure_count = failure_count;
     }
 }

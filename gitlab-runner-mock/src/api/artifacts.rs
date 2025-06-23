@@ -138,6 +138,16 @@ impl Respond for JobArtifactsDownloader {
             if token != job.token() {
                 ResponseTemplate::new(StatusCode::FORBIDDEN)
             } else {
+                let mut downloads_counter =
+                    self.mock.inner.artifact_downloads_counter.lock().unwrap();
+                if downloads_counter.failure_count > 0 {
+                    if downloads_counter.count < downloads_counter.failure_count {
+                        downloads_counter.count += 1;
+                        return ResponseTemplate::new(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                    downloads_counter.count = 0;
+                }
+
                 match job
                     .uploaded_artifacts()
                     .find(|a| a.artifact_type.as_deref() == Some("archive"))
