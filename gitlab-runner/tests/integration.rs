@@ -411,6 +411,7 @@ async fn job_log() {
                 outputln!("aa");
                 job.trace("bb\n");
                 outputln!("cc");
+                tracing::info_span!("test", gitlab.output = true).in_scope(|| tracing::info!("dd"));
                 SimpleRun::dummy(Ok(())).await
             })
             .with_current_subscriber()
@@ -419,7 +420,7 @@ async fn job_log() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Success, job.state());
-        assert_eq!(b"aa\nbb\ncc\n", job.log().as_slice());
+        assert_eq!(b"aa\nbb\ncc\ndd\n", job.log().as_slice());
     }
     .with_subscriber(subscriber)
     .await;
