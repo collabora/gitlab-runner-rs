@@ -27,9 +27,12 @@ impl field::Visit for GitlabJobFinder {
     fn record_debug(&mut self, _field: &field::Field, _value: &dyn std::fmt::Debug) {}
 }
 
+struct GitlabOutputEnabled;
+
 #[derive(Debug, Default)]
-struct GitlabOutput(bool);
-impl field::Visit for GitlabOutput {
+struct GitlabOutputFinder(bool);
+
+impl field::Visit for GitlabOutputFinder {
     fn record_bool(&mut self, field: &field::Field, value: bool) {
         if field.name() == "gitlab.output" {
             self.0 = value
@@ -95,10 +98,16 @@ where
     S: for<'a> LookupSpan<'a>,
 {
     fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
-        let mut gitlab_output = GitlabOutput::default();
+        let mut gitlab_output = GitlabOutputFinder::default();
         event.record(&mut gitlab_output);
 
-        if gitlab_output.0 {
+        if gitlab_output.0
+            || ctx.event_scope(event).is_some_and(|scope| {
+                scope
+                    .from_root()
+                    .any(|span| span.extensions().get::<GitlabOutputEnabled>().is_some())
+            })
+        {
             if let Some(scope) = ctx.event_scope(event) {
                 if let Some(jobinfo) = scope
                     .from_root()
@@ -144,6 +153,14 @@ where
             let mut extensions = span.extensions_mut();
             extensions.insert(job);
         }
+
+        let mut f = GitlabOutputFinder(false);
+        attrs.record(&mut f);
+        if f.0 {
+            let span = ctx.span(id).unwrap();
+            let mut extensions = span.extensions_mut();
+            extensions.insert(GitlabOutputEnabled);
+        }
     }
 }
 
@@ -159,9 +176,18 @@ impl GitlabFilter {
     }
 }
 
-impl<S> Filter<S> for GitlabFilter {
-    fn enabled(&self, meta: &Metadata<'_>, _cx: &Context<'_, S>) -> bool {
+impl<S: Subscriber + for<'span> LookupSpan<'span>> Filter<S> for GitlabFilter {
+    fn enabled(&self, meta: &Metadata<'_>, cx: &Context<'_, S>) -> bool {
         self.is_enabled(meta)
+            || cx
+                .current_span()
+                .id()
+                .and_then(|id| cx.span_scope(id))
+                .is_some_and(|scope| {
+                    scope
+                        .from_root()
+                        .any(|span| self.is_enabled(span.metadata()))
+                })
     }
 
     fn callsite_enabled(&self, metadata: &'static Metadata<'static>) -> Interest {
