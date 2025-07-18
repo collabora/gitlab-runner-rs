@@ -343,7 +343,7 @@ impl RunnerBuilder {
         // 2 hex chars for each byte
         for b in &mac.finalize().into_bytes()[0..Self::DEFAULT_ID_LEN / 2] {
             // Infallible: writing to a string
-            write!(&mut system_id, "{:02x}", b).unwrap();
+            write!(&mut system_id, "{b:02x}").unwrap();
         }
         Some(system_id)
     }

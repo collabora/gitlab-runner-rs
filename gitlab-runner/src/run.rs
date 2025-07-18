@@ -30,7 +30,7 @@ where
     Ret: Future<Output = Result<J, ()>>,
 {
     if let Err(e) = tokio::fs::create_dir(&build_dir).await {
-        job.trace(format!("Failed to remove build dir: {}", e));
+        job.trace(format!("Failed to remove build dir: {e}"));
         return Err(());
     }
     let mut handler = process(job).await?;

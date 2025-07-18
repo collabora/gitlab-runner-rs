@@ -37,7 +37,7 @@ impl Display for MockJobState {
             // if it's not *identical* to the exact GitLab job status.
             MockJobState::Cancelled => "canceled",
         };
-        write!(f, "{}", d)
+        write!(f, "{d}")
     }
 }
 
@@ -158,7 +158,7 @@ impl MockJob {
         Self {
             name,
             id,
-            token: format!("job-token-{}", id),
+            token: format!("job-token-{id}"),
             variables: Vec::new(),
             steps: Vec::new(),
             dependencies: Vec::new(),

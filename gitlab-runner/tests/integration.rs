@@ -595,7 +595,7 @@ async fn runner_limit() {
             }
             let running = jobs.running();
 
-            assert!(running <= JOB_LIMIT, "running {} > {}", running, N_JOBS);
+            assert!(running <= JOB_LIMIT, "running {running} > {N_JOBS}");
             if running == JOB_LIMIT || jobs.pending() == 0 {
                 if let Some(j) = jobs.jobs().iter().find(|j| j.is_running()) {
                     if !j.completed() {
