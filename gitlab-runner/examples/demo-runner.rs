@@ -53,7 +53,7 @@ impl Run {
     async fn get_facts(&self, amount: u8) -> Result<Vec<String>, ()> {
         let mut url = Url::parse("https://catfact.ninja/facts").unwrap();
         url.query_pairs_mut()
-            .append_pair("limit", &format!("{}", amount));
+            .append_pair("limit", &format!("{amount}"));
 
         let mut r: Reply = self
             .client
@@ -148,7 +148,7 @@ impl UploadableFile for DemoFile {
     fn get_path(&self) -> Cow<'_, str> {
         match self {
             Self::ReadMe => "README.md".into(),
-            Self::Fact { index, .. } => format!("fact_{}.txt", index).into(),
+            Self::Fact { index, .. } => format!("fact_{index}.txt").into(),
         }
     }
 
@@ -224,7 +224,7 @@ async fn main() -> Result<()> {
             option_env!("VERGEN_GIT_SHA")
                 .map(|sha| {
                     if option_env!("VERGEN_GIT_DIRTY") == Some("true") {
-                        format!("{}-dirty", sha)
+                        format!("{sha}-dirty")
                     } else {
                         sha.to_string()
                     }
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
             8,
         ) => match r {
                 Ok(_) => info!("Runner exited"),
-                Err(e) => panic!("Failed to pick up new jobs: {}", e)
+                Err(e) => panic!("Failed to pick up new jobs: {e}")
         },
         _ = term.recv() => info!("Got TERM: exiting!"),
         _ = int.recv() => info!("Got INT: exiting!"),

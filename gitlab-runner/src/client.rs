@@ -200,7 +200,7 @@ impl std::fmt::Display for ArtifactFormat {
             Self::Gzip => "gzip",
             Self::Raw => "raw",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -358,7 +358,7 @@ impl Client {
         state: JobState,
     ) -> Result<JobUpdateReply, Error> {
         let mut url = self.url.clone();
-        let id_s = format!("{}", id);
+        let id_s = format!("{id}");
         url.path_segments_mut()
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s]);
@@ -397,7 +397,7 @@ impl Client {
         }
 
         let mut url = self.url.clone();
-        let id_s = format!("{}", id);
+        let id_s = format!("{id}");
         url.path_segments_mut()
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s, "trace"]);
@@ -435,7 +435,7 @@ impl Client {
         mut dest: D,
     ) -> Result<(), Error> {
         let mut url = self.url.clone();
-        let id_s = format!("{}", id);
+        let id_s = format!("{id}");
         url.path_segments_mut()
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s, "artifacts"]);
@@ -481,7 +481,7 @@ impl Client {
         };
 
         let mut url = self.url.clone();
-        let id_s = format!("{}", id);
+        let id_s = format!("{id}");
         url.path_segments_mut()
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s, "artifacts"]);

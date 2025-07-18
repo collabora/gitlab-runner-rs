@@ -180,8 +180,8 @@ impl AsyncWrite for UploadFile<'_> {
 fn make_artifact_name(base: Option<&str>, format: &ArtifactFormat) -> String {
     let name = base.unwrap_or(DEFAULT_ARTIFACT_NAME);
     match format {
-        ArtifactFormat::Zip => format!("{}.zip", name),
-        ArtifactFormat::Gzip => format!("{}.gz", name),
+        ArtifactFormat::Zip => format!("{name}.zip"),
+        ArtifactFormat::Gzip => format!("{name}.gz"),
         ArtifactFormat::Raw => unimplemented!("Raw artifacts are not supported."),
     }
 }

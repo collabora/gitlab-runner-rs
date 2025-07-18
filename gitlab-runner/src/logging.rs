@@ -47,13 +47,13 @@ struct OutputToGitlab {
 impl field::Visit for OutputToGitlab {
     fn record_str(&mut self, field: &field::Field, value: &str) {
         if field.name() == "message" {
-            self.joblog.trace(format!("{}\n", value).as_bytes());
+            self.joblog.trace(format!("{value}\n").as_bytes());
         }
     }
 
     fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.joblog.trace(format!("{:?}\n", value).as_bytes());
+            self.joblog.trace(format!("{value:?}\n").as_bytes());
         }
     }
 }

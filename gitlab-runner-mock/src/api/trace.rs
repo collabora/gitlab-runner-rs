@@ -59,7 +59,7 @@ impl Respond for JobTraceResponder {
                         )
                         .insert_header("Job-Status", &*job.state().to_string()),
                     Err(e) => ResponseTemplate::new(StatusCode::RANGE_NOT_SATISFIABLE)
-                        .set_body_string(format!("{:?}", e)),
+                        .set_body_string(format!("{e:?}")),
                 }
             }
         } else {
