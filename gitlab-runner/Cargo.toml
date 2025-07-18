@@ -1,6 +1,6 @@
 [package]
 name = "gitlab-runner"
-version = "0.2.0"
+version = "0.3.0-rc1"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
