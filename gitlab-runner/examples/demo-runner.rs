@@ -7,10 +7,12 @@ use futures::io::Cursor;
 use futures::AsyncRead;
 use gitlab_runner::job::Job;
 use gitlab_runner::{
-    outputln, GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile,
+    clone_git_repository, outputln, GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder,
+    UploadableFile,
 };
 use serde::Deserialize;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
@@ -122,6 +124,117 @@ impl Run {
                         }
                     }
                     Ok(())
+                }
+                "clone" => {
+                    let url = match p.next() {
+                        Some(url) => url,
+                        _ => {
+                            outputln!("Missing repo url as first argument");
+                            return Err(());
+                        }
+                    };
+                    let path = match p.next() {
+                        Some(path) => self.job.build_dir().join(path),
+                        _ => {
+                            outputln!("Missing repo output path as second argument");
+                            return Err(());
+                        }
+                    };
+                    let reference = p.next();
+
+                    let cancel_token = CancellationToken::new();
+                    let repo_path = clone_git_repository(
+                        self.job.build_dir(),
+                        url,
+                        reference,
+                        std::iter::empty::<&str>(),
+                        Some(1),
+                        cancel_token,
+                    )
+                    .await
+                    .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
+
+                    std::fs::rename(repo_path, path)
+                        .map_err(|e| outputln!("Failed to move repo path: {}", e.to_string()))?;
+
+                    Ok(())
+                }
+                "checkout" => {
+                    let path = match p.next() {
+                        Some(path) => self.job.build_dir().join(path),
+                        _ => self.job.build_dir().to_path_buf(),
+                    };
+                    let cancel_token = CancellationToken::new();
+                    let temp_repo_path = self
+                        .job
+                        .clone_git_repository(cancel_token)
+                        .await
+                        .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
+
+                    outputln!("Checked out to {:?}", temp_repo_path);
+
+                    if !path.exists() {
+                        std::fs::create_dir(&path).map_err(|e| {
+                            outputln!("Failed to create dir for repo: {}", e.to_string())
+                        })?;
+                    }
+
+                    let repo_read_dir = temp_repo_path.read_dir().map_err(|e| {
+                        outputln!("Failed to enumerate repo dir: {}", e.to_string())
+                    })?;
+                    for entry in repo_read_dir {
+                        let entry = entry.map_err(|e| {
+                            outputln!("Failed to read repo file: {}", e.to_string())
+                        })?;
+                        std::fs::rename(entry.path(), path.join(entry.file_name())).map_err(
+                            |e| outputln!("Failed to move repo file: {}", e.to_string()),
+                        )?;
+                    }
+
+                    std::fs::remove_dir_all(temp_repo_path).map_err(|e| {
+                        outputln!("Failed to remove temp directory: {}", e.to_string())
+                    })?;
+
+                    outputln!("Moved repo to {:?}", path);
+
+                    Ok(())
+                }
+                "list-dir" => {
+                    let path = match p.next() {
+                        Some(path) => self.job.build_dir().join(path),
+                        _ => self.job.build_dir().to_path_buf(),
+                    };
+                    if !path.exists() {
+                        outputln!("Path {:?} doesn't exist", path);
+                    } else {
+                        for entry in path.read_dir().unwrap() {
+                            match entry {
+                                Ok(entry) => outputln!("{}", entry.file_name().to_str().unwrap()),
+                                Err(e) => outputln!("Error: {:?}: {}", e, e.to_string()),
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                "cat" => {
+                    let path = match p.next() {
+                        Some(path) => self.job.build_dir().join(path),
+                        _ => {
+                            outputln!("No path provided");
+                            return Err(());
+                        }
+                    };
+                    if !path.exists() {
+                        outputln!("Path {:?} doesn't exist", path);
+                        Err(())
+                    } else {
+                        let data = match std::fs::read_to_string(path) {
+                            Ok(s) => s,
+                            _ => "Failed to read file to text".to_string(),
+                        };
+                        outputln!("{}", data);
+                        Ok(())
+                    }
                 }
                 _ => {
                     outputln!("Unknown command\n");

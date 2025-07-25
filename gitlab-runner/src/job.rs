@@ -1,6 +1,8 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
-use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
+use crate::client::{
+    Client, GitCheckoutError, JobArtifactFile, JobDependency, JobResponse, JobVariable,
+};
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
@@ -8,9 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
 use tokio_retry2::strategy::{jitter, FibonacciBackoff};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::client::Error as ClientError;
+
+use crate::clone_git_repository;
 
 /// Gitlab job environment variable
 ///
@@ -336,5 +341,52 @@ impl Job {
     /// Get a reference to the jobs build dir.
     pub fn build_dir(&self) -> &Path {
         &self.build_dir
+    }
+
+    /*
+     * Notes on gitlab-runner:
+     * https://gitlab.com/gitlab-org/gitlab-runner/-/blob/main/shells/abstract.go#L556
+     *
+     * gitlab runner:
+     *  * Clones to BuildDir
+     *  * Checks out git_info.sha and fetches all in git_info.refspecs
+     *  * Hardcoded username "gitlab-ci-token"
+     *  * credHelperCommand?
+     *  * if ".git/shallow" exists use git "--unshallow" argument
+     *
+     * Steps:
+     *  * git config
+     *  * cleanup .git directory? {index.lock, modbules, etc.}
+     *  * git init
+     *  * cd repo
+     *  * git remote add origin
+     *  * git fetch origin
+     *     --no-recurse-submodules $refspecs
+     *     --depth $depth $fetch_flags
+     *     --unshallow if depth <= 0 && exists(.git/shallow)
+     *  * git checkout $sha
+     */
+
+    /// Fetch and checkout worktree for job
+    ///
+    /// This creates a new path for the repo as gitoxide deletes it on failure.
+    #[allow(clippy::result_large_err)]
+    pub async fn clone_git_repository(
+        &self,
+        cancel_token: CancellationToken,
+    ) -> Result<PathBuf, GitCheckoutError> {
+        if !self.response.allow_git_fetch {
+            return Err(GitCheckoutError::FetchNotAllowed);
+        }
+
+        clone_git_repository(
+            self.build_dir(),
+            &self.response.git_info.repo_url,
+            Some(&self.response.git_info.sha),
+            &self.response.git_info.refspecs,
+            Some(self.response.git_info.depth),
+            cancel_token,
+        )
+        .await
     }
 }
