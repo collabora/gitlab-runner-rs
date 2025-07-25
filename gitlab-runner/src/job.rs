@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
 use tokio_retry2::strategy::{jitter, FibonacciBackoff};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::client::Error as ClientError;
@@ -370,7 +371,10 @@ impl Job {
     ///
     /// This creates a new path for the repo as gitoxide deletes it on failure.
     #[allow(clippy::result_large_err)]
-    pub fn clone_git_repository(&self) -> Result<PathBuf, GitCheckoutError> {
+    pub async fn clone_git_repository(
+        &self,
+        cancel_token: CancellationToken,
+    ) -> Result<PathBuf, GitCheckoutError> {
         if !self.response.allow_git_fetch {
             return Err(GitCheckoutError::FetchNotAllowed);
         }
@@ -381,6 +385,8 @@ impl Job {
             Some(&self.response.git_info.sha),
             &self.response.git_info.refspecs,
             Some(self.response.git_info.depth),
+            cancel_token,
         )
+        .await
     }
 }

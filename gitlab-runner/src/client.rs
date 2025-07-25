@@ -309,6 +309,10 @@ pub enum GitCheckoutError {
     GitWorktreeCheckout(#[from] gix::worktree::state::checkout::Error),
     #[error(transparent)]
     GitHeadPeel(#[from] gix::head::peel::Error),
+    #[error(transparent)]
+    ThreadJoinError(#[from] tokio::task::JoinError),
+    #[error("Checkout cancelled")]
+    Cancelled,
     #[error("Job does not allow fetch")]
     FetchNotAllowed,
     #[error("Failed to find commit")]
