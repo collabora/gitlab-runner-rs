@@ -8,7 +8,7 @@ mod run;
 use crate::run::Run;
 pub mod job;
 use client::{ClientMetadata, GitCheckoutError};
-use gix::{clone, create, index, open, progress, refspec, remote, DynNestedProgress};
+use gix::{clone, create, index, open, progress, refs, refspec, remote, DynNestedProgress};
 use hmac::Hmac;
 use hmac::Mac;
 use job::{Job, JobLog};
@@ -543,27 +543,26 @@ pub fn clone_git_repository_sync(
 
     let mut sha = None;
 
+    // Add object SHA to the fetch as `with_ref_name` does not support SHAs
     if let Some(head_ref) = head_ref {
         if let Ok(object_id) = gix::ObjectId::from_hex(head_ref.as_bytes()) {
-            // TODO: I need to specify that the sha should be fetched from remote, right?
-            //  Is there a format for a sha as a refspec?
-            if let Ok(refspec) = refspec::parse(
+            let refspec = refspec::parse(
                 format!("+{head_ref}").as_str().into(),
                 refspec::parse::Operation::Fetch,
-            ) {
-                refspecs.push(refspec.to_owned());
-            }
+            )?
+            .to_owned();
+            refspecs.push(refspec);
             sha = Some(object_id);
         } else {
-            // TODO: For some reason this doesn't create refs/heads/{reference}
-            if let Ok(refspec) = refspec::parse(
+            let refspec = refspec::parse(
                 format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}")
                     .as_str()
                     .into(),
                 refspec::parse::Operation::Fetch,
-            ) {
-                refspecs.push(refspec.to_owned());
-            }
+            )?
+            .to_owned();
+            refspecs.push(refspec);
+            fetch = fetch.with_ref_name(Some(head_ref))?
         }
     }
 
@@ -584,14 +583,30 @@ pub fn clone_git_repository_sync(
 
     let repo = checkout.persist();
 
+    // Make HEAD point to the given SHA
+    // See: gix::util::update_head
+    if let Some(sha) = sha {
+        repo.edit_reference(refs::transaction::RefEdit {
+            change: refs::transaction::Change::Update {
+                log: refs::transaction::LogChange {
+                    mode: refs::transaction::RefLog::AndReference,
+                    force_create_reflog: false,
+                    message: format!("clone repo at {}", sha).into(),
+                },
+                expected: refs::transaction::PreviousValue::Any,
+                new: refs::Target::Object(sha.to_owned()),
+            },
+            name: "HEAD".try_into()?,
+            deref: false,
+        })?;
+    }
+
     let root_tree_id = if let Some(sha) = sha {
         // Checkout worktree at specific SHA
         repo.try_find_object(sha)?
             .ok_or(GitCheckoutError::MissingCommit)?
     } else if let Some(reference) = head_ref {
-        repo
-            // TODO: This should be refs/heads/{reference} but it doesn't exist
-            .try_find_reference(format!("refs/remotes/origin/{reference}").as_str())?
+        repo.try_find_reference(format!("refs/heads/{reference}").as_str())?
             .ok_or(GitCheckoutError::MissingCommit)?
             .peel_to_id_in_place()?
             .object()?

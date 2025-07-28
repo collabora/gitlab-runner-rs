@@ -292,6 +292,8 @@ pub enum GitCheckoutError {
     #[error(transparent)]
     GitObjsFindExisting(#[from] gix::objs::find::existing::Error),
     #[error(transparent)]
+    GitRefEdit(#[from] gix::reference::edit::Error),
+    #[error(transparent)]
     GitRefIterInit(#[from] gix::reference::iter::init::Error),
     #[error(transparent)]
     GitRefFindExisting(#[from] gix::reference::find::existing::Error),
