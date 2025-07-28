@@ -12,6 +12,7 @@ use gitlab_runner::{
 };
 use serde::Deserialize;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
@@ -141,13 +142,16 @@ impl Run {
                     };
                     let reference = p.next();
 
+                    let cancel_token = CancellationToken::new();
                     let repo_path = clone_git_repository(
                         self.job.build_dir(),
                         url,
                         reference,
                         p,
                         Some(1),
+                        cancel_token,
                     )
+                    .await
                     .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
 
                     std::fs::rename(repo_path, path)
@@ -160,9 +164,11 @@ impl Run {
                         Some(path) => self.job.build_dir().join(path),
                         _ => self.job.build_dir().to_path_buf(),
                     };
+                    let cancel_token = CancellationToken::new();
                     let temp_repo_path = self
                         .job
-                        .clone_git_repository()
+                        .clone_git_repository(cancel_token)
+                        .await
                         .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
 
                     outputln!("Checked out to {:?}", temp_repo_path);

@@ -33,6 +33,8 @@ use std::fmt::Write;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use url::Url;
 
@@ -459,27 +461,65 @@ impl Runner {
     }
 }
 
-// TODO: Should clone_git_repository be async
-//   gitoxide doesn't currently have async implemented for http backend
+// TODO: Should we re-export gix::progress to provide a means to monitor progress
 // TODO: Is "clippy::result_large_err" the best solution to GitCheckoutError
 
-/// Fetch and checkout a given worktree
+/// Fetch and checkout a given worktree on a thread
 ///
-/// This creates a new path for the repo as gitoxide deletes it on failure.
-#[allow(clippy::result_large_err)]
-pub fn clone_git_repository(
+/// See: [clone_git_repository_sync]
+pub async fn clone_git_repository(
     parent_path: &Path,
     repo_url: &str,
     head_ref: Option<&str>,
     refspecs: impl IntoIterator<Item = impl AsRef<str>>,
     depth: Option<u32>,
+    cancel_token: CancellationToken,
+) -> Result<PathBuf, GitCheckoutError> {
+    let parent_path = parent_path.to_owned();
+    let repo_url = repo_url.to_owned();
+    let head_ref = head_ref.map(|a| a.to_owned());
+    let should_interrupt: Arc<AtomicBool> = Default::default();
+    let should_interrupt_cancel = should_interrupt.clone();
+    let refspecs: Vec<_> = refspecs
+        .into_iter()
+        .map(|s| s.as_ref().to_owned())
+        .collect();
+    // offload the clone operation to one of the tokio runtimes blocking threads
+    tokio::select! {
+        result = tokio::task::spawn_blocking(move || {
+            clone_git_repository_sync(
+                &parent_path,
+                &repo_url,
+                head_ref.as_deref(),
+                refspecs,
+                depth,
+                &should_interrupt,
+            )
+        }) => result?,
+        _ = cancel_token.cancelled() => {
+            should_interrupt_cancel.store(true, Ordering::SeqCst);
+            Err(GitCheckoutError::Cancelled)
+        }
+    }
+}
+
+/// Fetch and checkout a given worktree
+///
+/// This creates a new path for the repo as gitoxide deletes it on failure.
+#[allow(clippy::result_large_err)]
+pub fn clone_git_repository_sync(
+    parent_path: &Path,
+    repo_url: &str,
+    head_ref: Option<&str>,
+    refspecs: impl IntoIterator<Item = impl AsRef<str>>,
+    depth: Option<u32>,
+    should_interrupt: &AtomicBool,
 ) -> Result<PathBuf, GitCheckoutError> {
     let repo_dir = tempfile::Builder::new()
         .prefix("repo_")
         .tempdir_in(parent_path)?;
 
     // TODO: Should we expose the ability to interrupt / report progress
-    let should_interrupt = AtomicBool::new(false);
     let mut progress = progress::Discard;
 
     // TODO: Is Options::isolated correct here?
@@ -593,7 +633,7 @@ pub fn clone_git_repository(
         repo.objects.clone().into_arc()?,
         &files_progress,
         &bytes_progress,
-        &should_interrupt,
+        should_interrupt,
         Default::default(),
     )?;
 
