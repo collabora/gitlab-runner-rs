@@ -8,7 +8,7 @@ use std::task::Poll;
 use std::thread;
 
 use flate2::{Compression, GzBuilder};
-use futures::{future::BoxFuture, AsyncWrite, FutureExt};
+use futures::{AsyncWrite, FutureExt, future::BoxFuture};
 use reqwest::Body;
 use tokio::fs::File as AsyncFile;
 use tokio::sync::mpsc::{self, error::SendError};
@@ -17,8 +17,8 @@ use tokio_util::io::ReaderStream;
 use tracing::{error, warn};
 
 use crate::{
-    client::{ArtifactFormat, ArtifactInfo, Client, JobArtifact},
     JobResult,
+    client::{ArtifactFormat, ArtifactInfo, Client, JobArtifact},
 };
 
 const DEFAULT_ARTIFACT_NAME: &str = "default";

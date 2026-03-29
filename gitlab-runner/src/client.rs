@@ -167,30 +167,22 @@ pub(crate) struct JobStep {
 
 #[derive(Copy, Clone, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ArtifactWhen {
     Always,
     OnFailure,
+    #[default]
     OnSuccess,
-}
-
-impl Default for ArtifactWhen {
-    fn default() -> Self {
-        Self::OnSuccess
-    }
 }
 
 #[derive(Copy, Clone, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ArtifactFormat {
+    #[default]
     Zip,
     Gzip,
     Raw,
-}
-
-impl Default for ArtifactFormat {
-    fn default() -> Self {
-        Self::Zip
-    }
 }
 
 impl std::fmt::Display for ArtifactFormat {

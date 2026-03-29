@@ -7,10 +7,10 @@ use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder};
 use gitlab_runner_mock::{GitlabRunnerMock, MockJob, MockJobState};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::instrument::WithSubscriber;
-use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
+use tracing_subscriber::layer::SubscriberExt;
 
 struct Completion(oneshot::Receiver<()>);
 

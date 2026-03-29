@@ -3,14 +3,14 @@ use std::io::{IsTerminal, Read};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use futures::io::Cursor;
 use futures::AsyncRead;
+use futures::io::Cursor;
 use gitlab_runner::job::Job;
 use gitlab_runner::{
-    outputln, GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile,
+    GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile, outputln,
 };
 use serde::Deserialize;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;

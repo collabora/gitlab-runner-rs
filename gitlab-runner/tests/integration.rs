@@ -1,6 +1,6 @@
 use futures::future;
 use gitlab_runner::job::Job;
-use gitlab_runner::{outputln, GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBuilder};
+use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBuilder, outputln};
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
@@ -8,10 +8,10 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
-use tracing::instrument::WithSubscriber;
 use tracing::Subscriber;
-use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing::instrument::WithSubscriber;
 use tracing_subscriber::Registry;
+use tracing_subscriber::layer::SubscriberExt;
 
 use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
@@ -484,9 +484,11 @@ async fn job_parallel() {
 
         let testjobs = jobs.jobs();
         // All are running now
-        assert!(testjobs
-            .iter()
-            .any(|j| j.job.state() == MockJobState::Running));
+        assert!(
+            testjobs
+                .iter()
+                .any(|j| j.job.state() == MockJobState::Running)
+        );
 
         // Complete in random order
         for n in &[4, 0, 2, 1, 3] {
@@ -502,9 +504,11 @@ async fn job_parallel() {
         assert_eq!(runner.running(), 0);
 
         // Should all have finished successfully now
-        assert!(testjobs
-            .iter()
-            .any(|j| j.job.state() == MockJobState::Success));
+        assert!(
+            testjobs
+                .iter()
+                .any(|j| j.job.state() == MockJobState::Success)
+        );
     }
     .with_subscriber(subscriber)
     .await;
@@ -551,9 +555,11 @@ async fn runner_run() {
         }
 
         // Should all have finished successfully now
-        assert!(testjobs
-            .iter()
-            .all(|j| j.job.state() == MockJobState::Success));
+        assert!(
+            testjobs
+                .iter()
+                .all(|j| j.job.state() == MockJobState::Success)
+        );
     }
     .with_subscriber(subscriber)
     .await;
@@ -596,12 +602,11 @@ async fn runner_limit() {
             let running = jobs.running();
 
             assert!(running <= JOB_LIMIT, "running {running} > {N_JOBS}");
-            if running == JOB_LIMIT || jobs.pending() == 0 {
-                if let Some(j) = jobs.jobs().iter().find(|j| j.is_running()) {
-                    if !j.completed() {
-                        j.complete(()).await;
-                    }
-                }
+            if (running == JOB_LIMIT || jobs.pending() == 0)
+                && let Some(j) = jobs.jobs().iter().find(|j| j.is_running())
+                && !j.completed()
+            {
+                j.complete(()).await;
             }
 
             if jobs.finished() == N_JOBS {
@@ -610,10 +615,11 @@ async fn runner_limit() {
         }
 
         // Should all have finished successfully now
-        assert!(jobs
-            .jobs()
-            .iter()
-            .all(|j| j.job.state() == MockJobState::Success));
+        assert!(
+            jobs.jobs()
+                .iter()
+                .all(|j| j.job.state() == MockJobState::Success)
+        );
     }
     .with_subscriber(subscriber)
     .await;

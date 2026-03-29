@@ -2,7 +2,8 @@
 name = "gitlab-runner-mock"
 version = "0.2.1"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
-edition = "2021"
+edition = "2024"
+rust-version.workspace = true
 license = "MIT OR Apache-2.0"
 description = "Mock crate for gitlab runners"
 homepage = "https://github.com/collabora/gitlab-runner-rs"
@@ -11,11 +12,11 @@ repository = "https://github.com/collabora/gitlab-runner-rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wiremock = "0.6"
-serde = { version = "1.0.200", features = ["derive"] }
-serde_json = "1.0.143"
-url = "2.5.4"
-thiserror = "2.0.11"
-http = "1.2.0"
-multer = "3.0.0"
-futures = "0.3.15"
+wiremock = "0.6.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+url = "2.5.8"
+thiserror = "2.0.18"
+http = "1.4.0"
+multer = "3.1.0"
+futures = "0.3.32"

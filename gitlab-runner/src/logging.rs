@@ -1,9 +1,9 @@
-use tracing::{field, metadata::LevelFilter, subscriber::Interest, Metadata, Subscriber};
+use tracing::{Metadata, Subscriber, field, metadata::LevelFilter, subscriber::Interest};
 use tracing_subscriber::{
+    Layer,
     filter::Filtered,
     layer::{Context, Filter},
     registry::LookupSpan,
-    Layer,
 };
 
 use crate::{
@@ -98,17 +98,14 @@ where
         let mut gitlab_output = GitlabOutput::default();
         event.record(&mut gitlab_output);
 
-        if gitlab_output.0 {
-            if let Some(scope) = ctx.event_scope(event) {
-                if let Some(jobinfo) = scope
-                    .from_root()
-                    .find_map(|span| span.extensions().get::<GitlabJob>().cloned())
-                {
-                    if let Some(joblog) = self.run_list.lookup(&jobinfo.0) {
-                        event.record(&mut OutputToGitlab { joblog });
-                    }
-                }
-            }
+        if gitlab_output.0
+            && let Some(scope) = ctx.event_scope(event)
+            && let Some(jobinfo) = scope
+                .from_root()
+                .find_map(|span| span.extensions().get::<GitlabJob>().cloned())
+            && let Some(joblog) = self.run_list.lookup(&jobinfo.0)
+        {
+            event.record(&mut OutputToGitlab { joblog });
         }
     }
 

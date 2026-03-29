@@ -2,7 +2,8 @@
 name = "gitlab-runner"
 version = "0.3.0-rc1"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
-edition = "2021"
+edition = "2024"
+rust-version.workspace = true
 license = "MIT OR Apache-2.0"
 description = "Helper crate to build custom gitlab runners"
 homepage = "https://github.com/collabora/gitlab-runner-rs"
@@ -12,38 +13,37 @@ readme = "../README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-flate2 = "1.1.1"
+flate2 = "1.1.9"
 glob = "0.3"
-reqwest = { version = "0.12.0", features = [ "json", "multipart", "stream" ] }
-tokio = { version = "1.44.2", features = [ "full" ] }
-url = "2.5.4"
-serde = { version = "1.0.200", features = [ "derive" ] }
-serde_json = "1.0.143"
-thiserror = "2.0.11"
-bytes = "1.9.0"
-zip = "5.1.1"
-pin-project = "1.1.10"
-futures = "0.3.15"
-async-trait = "0.1.86"
-tempfile = "3.15.0"
-parking_lot = "0.12.0"
-tracing-subscriber = "0.3.20"
-tracing = "0.1.41"
-doc-comment = "0.3.3"
+reqwest = { version = "0.13.2", features = [ "json", "multipart", "stream" ] }
+tokio = { version = "1.50.0", features = [ "full" ] }
+url = "2.5.8"
+serde = { version = "1.0.228", features = [ "derive" ] }
+serde_json = "1.0.145"
+thiserror = "2.0.18"
+bytes = "1.11.1"
+zip = "8.4.0"
+pin-project = "1.1.11"
+futures = "0.3.32"
+async-trait = "0.1.89"
+tempfile = "3.27.0"
+parking_lot = "0.12.5"
+tracing-subscriber = "0.3.23"
+tracing = "0.1.44"
+doc-comment = "0.3.4"
 sha2 = "0.10.9"
 hmac = "0.12.1"
-rand = "0.9.0"
-tokio-util = { version = "0.7.10", features = [ "io" ] }
-tokio-retry2 = { version = "0.6.0", features = ["jitter"] }
+rand = "0.10.0"
+tokio-util = { version = "0.7.18", features = [ "io" ] }
+tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
 
 [dev-dependencies]
-tokio = { version = "1.44.2", features = [ "full", "test-util" ] }
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+tokio = { version = "1.50.0", features = [ "full", "test-util" ] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.2.1" }
-futures = "0.3.15"
-anyhow = "1.0.95"
-clap = { version = "4.5.26", features = ["derive"] }
-clap_derive = "4.5.24"
+futures = "0.3.32"
+anyhow = "1.0.102"
+clap = { version = "4.6.0", features = ["derive"] }
 
 [build-dependencies]
 vergen-gitcl = "1.0.8"

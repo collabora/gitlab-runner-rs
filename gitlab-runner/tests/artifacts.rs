@@ -3,8 +3,8 @@ use std::io::Read;
 
 use flate2::read::GzDecoder;
 use tracing::instrument::WithSubscriber;
-use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::Registry;
+use tracing_subscriber::layer::SubscriberExt;
 use zip::ZipArchive;
 
 use gitlab_runner::job::Job;
