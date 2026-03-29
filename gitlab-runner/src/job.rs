@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
-use tokio_retry2::strategy::{jitter, FibonacciBackoff};
+use tokio_retry2::strategy::{FibonacciBackoff, jitter};
 use tracing::info;
 
 use crate::client::Error as ClientError;
@@ -129,10 +129,10 @@ impl Dependency<'_> {
 
     async fn download_to_file(&self, _file: &JobArtifactFile) -> Result<(), ClientError> {
         let mut path = self.job.build_dir.join("artifacts");
-        if let Err(e) = tokio::fs::create_dir(&path).await {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                return Err(ClientError::WriteFailure(e));
-            }
+        if let Err(e) = tokio::fs::create_dir(&path).await
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(ClientError::WriteFailure(e));
         }
 
         // TODO this assumes it's all zip artifacts
@@ -313,17 +313,17 @@ impl Job {
     }
 
     /// Get the variable matching the given key
-    pub fn variable(&self, key: &str) -> Option<Variable> {
+    pub fn variable(&self, key: &str) -> Option<Variable<'_>> {
         self.response.variables.get(key).map(|v| Variable { v })
     }
 
     /// Get an iterator over all the variables associated with this job.
-    pub fn variables(&self) -> impl Iterator<Item = Variable> {
+    pub fn variables(&self) -> impl Iterator<Item = Variable<'_>> {
         self.response.variables.values().map(|v| Variable { v })
     }
 
     /// Get an iterator over the job dependencies
-    pub fn dependencies(&self) -> impl Iterator<Item = Dependency> {
+    pub fn dependencies(&self) -> impl Iterator<Item = Dependency<'_>> {
         self.response
             .dependencies
             .iter()

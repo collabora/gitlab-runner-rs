@@ -25,12 +25,12 @@ use tracing::instrument::WithSubscriber;
 mod runlist;
 use crate::runlist::RunList;
 
-use futures::prelude::*;
 use futures::AsyncRead;
+use futures::prelude::*;
 use std::borrow::Cow;
 use std::fmt::Write;
 use std::path::PathBuf;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::warn;
 use url::Url;
 

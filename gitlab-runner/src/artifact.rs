@@ -57,12 +57,12 @@ impl Artifact {
     }
 
     /// Get a file in the artifact by name
-    pub fn file(&mut self, name: &str) -> Option<ArtifactFile> {
+    pub fn file(&mut self, name: &str) -> Option<ArtifactFile<'_>> {
         self.zip.by_name(name).ok().map(ArtifactFile)
     }
 
     /// Get a file in the artifact by index
-    pub fn by_index(&mut self, i: usize) -> Option<ArtifactFile> {
+    pub fn by_index(&mut self, i: usize) -> Option<ArtifactFile<'_>> {
         self.zip.by_index(i).ok().map(ArtifactFile)
     }
 

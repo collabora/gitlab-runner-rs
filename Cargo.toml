@@ -5,3 +5,6 @@ members = [
   "gitlab-runner"
 ]
 
+[workspace.package]
+rust-version = "1.90"
+

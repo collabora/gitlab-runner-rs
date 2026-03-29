@@ -2,11 +2,11 @@ use bytes::Bytes;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::time::{interval_at, Duration, Instant, Interval, MissedTickBehavior};
+use tokio::time::{Duration, Instant, Interval, MissedTickBehavior, interval_at};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use tracing::instrument::WithSubscriber;
 use tracing::warn;
-use tracing::Instrument;
 
 use crate::client::{ArtifactWhen, Client, JobArtifact, JobResponse, JobState};
 use crate::job::{Job, JobLog};
@@ -41,13 +41,13 @@ where
             .step(&script.script, Phase::Script, &cancel_token)
             .await;
 
-        if !cancel_token.is_cancelled() {
-            if let Some(after) = response.step(Phase::AfterScript) {
-                // gitlab ignores the after_script result; so do the same
-                let _ = handler
-                    .step(&after.script, Phase::AfterScript, &cancel_token)
-                    .await;
-            }
+        if !cancel_token.is_cancelled()
+            && let Some(after) = response.step(Phase::AfterScript)
+        {
+            // gitlab ignores the after_script result; so do the same
+            let _ = handler
+                .step(&after.script, Phase::AfterScript, &cancel_token)
+                .await;
         }
 
         script_result
@@ -154,11 +154,11 @@ where
         }
     }
 
-    if uploaded > 0 {
-        if let Err(e) = uploader.upload().await {
-            warn!("Failed to upload artifact: {:?}", e);
-            return Err(());
-        }
+    if uploaded > 0
+        && let Err(e) = uploader.upload().await
+    {
+        warn!("Failed to upload artifact: {:?}", e);
+        return Err(());
     }
 
     Ok(())
@@ -290,11 +290,10 @@ impl Run {
                     let now = Instant::now();
                     if let Some(buf) = self.joblog.split_trace() {
                         // TODO be resiliant against send errors
-                        if let Some(interval) = self.send_trace(buf, &cancel_token).await {
-                            if interval != self.interval.period() {
+                        if let Some(interval) = self.send_trace(buf, &cancel_token).await
+                            && interval != self.interval.period() {
                                 self.interval = Self::create_interval(now, interval);
                             }
-                        }
                         self.last_alive = now;
                     } else if now - self.last_alive > KEEPALIVE_INTERVAL {
                         // In case of errors another update will be sent at the next tick

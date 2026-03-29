@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
-use http::header::CONTENT_TYPE;
 use http::StatusCode;
+use http::header::CONTENT_TYPE;
 use multer::Multipart;
 use wiremock::ResponseTemplate;
 use wiremock::{Request, Respond};
