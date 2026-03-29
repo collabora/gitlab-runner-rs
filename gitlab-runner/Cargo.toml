@@ -1,6 +1,6 @@
 [package]
 name = "gitlab-runner"
-version = "0.3.0-rc1"
+version = { workspace = true }
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
 edition = "2024"
 rust-version.workspace = true
@@ -40,7 +40,7 @@ tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
 [dev-dependencies]
 tokio = { version = "1.50.0", features = [ "full", "test-util" ] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-gitlab-runner-mock = { path = "../gitlab-runner-mock", version = "0.2.1" }
+gitlab-runner-mock = { path = "../gitlab-runner-mock" }
 futures = "0.3.32"
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
