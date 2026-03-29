@@ -46,4 +46,4 @@ anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
 
 [build-dependencies]
-vergen-gitcl = "1.0.8"
+vergen-gitcl = "9.1.0"
