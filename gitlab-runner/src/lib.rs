@@ -9,6 +9,7 @@ use crate::run::Run;
 pub mod job;
 use client::ClientMetadata;
 use hmac::Hmac;
+use hmac::KeyInit;
 use hmac::Mac;
 use job::{Job, JobLog};
 pub mod uploader;
