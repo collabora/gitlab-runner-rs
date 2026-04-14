@@ -33,7 +33,7 @@ tracing = "0.1.44"
 doc-comment = "0.3.4"
 sha2 = "0.10.9"
 hmac = "0.12.1"
-rand = "0.10.0"
+rand = "0.10.1"
 tokio-util = { version = "0.7.18", features = [ "io" ] }
 tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
 
