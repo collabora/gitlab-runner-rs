@@ -352,7 +352,7 @@ impl Job {
      *  * Clones to BuildDir
      *  * Checks out git_info.sha and fetches all in git_info.refspecs
      *  * Hardcoded username "gitlab-ci-token"
-     *  * credHelperCommand?
+     *  * 'credHelperCommand' is a shell command that's used to get the password from the env
      *  * if ".git/shallow" exists use git "--unshallow" argument
      *
      * Steps:
