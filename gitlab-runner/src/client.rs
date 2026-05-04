@@ -229,6 +229,8 @@ pub(crate) struct JobGitInfo {
     pub repo_url: String,
     pub refspecs: Vec<String>,
     pub sha: String,
+    // Note that this is already filled with the value of GIT_DEPTH:
+    // https://gitlab.com/gitlab-org/gitlab/-/blob/dd9009f7d9f57fdfd7496f14086c0f059f890688/app/presenters/ci/build_runner_presenter.rb#L164
     pub depth: u32,
     #[serde(flatten)]
     unparsed: JsonValue,
