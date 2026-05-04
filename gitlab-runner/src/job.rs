@@ -1,7 +1,8 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{
-    Client, GitCheckoutError, JobArtifactFile, JobDependency, JobResponse, JobVariable,
+    Client, GitCheckoutError, GitCheckoutErrorInner, JobArtifactFile, JobDependency, JobResponse,
+    JobVariable,
 };
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
@@ -370,13 +371,12 @@ impl Job {
     /// Fetch and checkout worktree for job
     ///
     /// This creates a new path for the repo as gitoxide deletes it on failure.
-    #[allow(clippy::result_large_err)]
     pub async fn clone_git_repository(
         &self,
         cancel_token: CancellationToken,
     ) -> Result<PathBuf, GitCheckoutError> {
         if !self.response.allow_git_fetch {
-            return Err(GitCheckoutError::FetchNotAllowed);
+            return Err(GitCheckoutErrorInner::FetchNotAllowed.into());
         }
 
         clone_git_repository(

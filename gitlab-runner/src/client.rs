@@ -258,7 +258,7 @@ impl JobResponse {
 }
 
 #[derive(Error, Debug)]
-pub enum GitCheckoutError {
+pub enum GitCheckoutErrorInner {
     #[error(transparent)]
     GitClone(#[from] gix::clone::Error),
     #[error(transparent)]
@@ -313,6 +313,19 @@ pub enum GitCheckoutError {
     MissingCommit,
     #[error(transparent)]
     Write(#[from] std::io::Error),
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct GitCheckoutError(pub Box<GitCheckoutErrorInner>);
+
+impl<T> From<T> for GitCheckoutError
+where
+    GitCheckoutErrorInner: From<T>,
+{
+    fn from(value: T) -> Self {
+        Self(Box::new(value.into()))
+    }
 }
 
 #[derive(Error, Debug)]

@@ -5,6 +5,7 @@ mod client;
 mod logging;
 use crate::client::Client;
 mod run;
+use crate::client::GitCheckoutErrorInner;
 use crate::run::Run;
 pub mod job;
 use client::{ClientMetadata, GitCheckoutError};
@@ -463,7 +464,6 @@ impl Runner {
 }
 
 // TODO: Should we re-export gix::progress to provide a means to monitor progress
-// TODO: Is "clippy::result_large_err" the best solution to GitCheckoutError
 
 /// Fetch and checkout a given worktree on a thread
 ///
@@ -499,7 +499,7 @@ pub async fn clone_git_repository(
         }) => result?,
         _ = cancel_token.cancelled() => {
             should_interrupt_cancel.store(true, Ordering::SeqCst);
-            Err(GitCheckoutError::Cancelled)
+            Err(GitCheckoutErrorInner::Cancelled.into())
         }
     }
 }
@@ -507,7 +507,6 @@ pub async fn clone_git_repository(
 /// Fetch and checkout a given worktree
 ///
 /// This creates a new path for the repo as gitoxide deletes it on failure.
-#[allow(clippy::result_large_err)]
 pub fn clone_git_repository_sync(
     parent_path: &Path,
     repo_url: &str,
@@ -605,17 +604,17 @@ pub fn clone_git_repository_sync(
     let root_tree_id = if let Some(sha) = sha {
         // Checkout worktree at specific SHA
         repo.try_find_object(sha)?
-            .ok_or(GitCheckoutError::MissingCommit)?
+            .ok_or(GitCheckoutErrorInner::MissingCommit)?
     } else if let Some(reference) = head_ref {
         repo.try_find_reference(format!("refs/heads/{reference}").as_str())?
-            .ok_or(GitCheckoutError::MissingCommit)?
+            .ok_or(GitCheckoutErrorInner::MissingCommit)?
             .peel_to_id()?
             .object()?
     } else {
         // Checkout head
         repo.head()?
             .try_peel_to_id()?
-            .ok_or(GitCheckoutError::MissingCommit)?
+            .ok_or(GitCheckoutErrorInner::MissingCommit)?
             .object()?
     };
     let root_tree = root_tree_id.peel_to_tree()?.id;
