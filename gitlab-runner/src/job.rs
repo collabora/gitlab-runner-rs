@@ -1,8 +1,7 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{
-    Client, GitCheckoutError, GitCheckoutErrorInner, JobArtifactFile, JobDependency, JobResponse,
-    JobVariable,
+    Client, GitCheckoutError, JobArtifactFile, JobDependency, JobResponse, JobVariable,
 };
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
@@ -375,10 +374,6 @@ impl Job {
         &self,
         cancel_token: CancellationToken,
     ) -> Result<PathBuf, GitCheckoutError> {
-        if !self.response.allow_git_fetch {
-            return Err(GitCheckoutErrorInner::FetchNotAllowed.into());
-        }
-
         clone_git_repository(
             self.build_dir(),
             &self.response.git_info.repo_url,

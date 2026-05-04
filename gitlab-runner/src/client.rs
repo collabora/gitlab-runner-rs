@@ -307,8 +307,6 @@ pub enum GitCheckoutErrorInner {
     ThreadJoinError(#[from] tokio::task::JoinError),
     #[error("Checkout cancelled")]
     Cancelled,
-    #[error("Job does not allow fetch")]
-    FetchNotAllowed,
     #[error("Failed to find commit")]
     MissingCommit,
     #[error(transparent)]
