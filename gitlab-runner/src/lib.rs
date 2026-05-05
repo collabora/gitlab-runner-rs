@@ -468,7 +468,7 @@ impl Runner {
 /// Fetch and checkout a given worktree on a thread
 ///
 /// See: [clone_git_repository_sync]
-pub async fn clone_git_repository(
+async fn clone_git_repository(
     parent_path: &Path,
     repo_url: &str,
     head_ref: Option<&str>,
@@ -507,7 +507,7 @@ pub async fn clone_git_repository(
 /// Fetch and checkout a given worktree
 ///
 /// This creates a new path for the repo as gitoxide deletes it on failure.
-pub fn clone_git_repository_sync(
+fn clone_git_repository_sync(
     parent_path: &Path,
     repo_url: &str,
     head_ref: Option<&str>,

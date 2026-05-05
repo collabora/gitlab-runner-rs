@@ -7,8 +7,7 @@ use futures::AsyncRead;
 use futures::io::Cursor;
 use gitlab_runner::job::Job;
 use gitlab_runner::{
-    GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile, clone_git_repository,
-    outputln,
+    GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile, outputln,
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
@@ -123,40 +122,6 @@ impl Run {
                             }
                         }
                     }
-                    Ok(())
-                }
-                "clone" => {
-                    let url = match p.next() {
-                        Some(url) => url,
-                        _ => {
-                            outputln!("Missing repo url as first argument");
-                            return Err(());
-                        }
-                    };
-                    let path = match p.next() {
-                        Some(path) => self.job.build_dir().join(path),
-                        _ => {
-                            outputln!("Missing repo output path as second argument");
-                            return Err(());
-                        }
-                    };
-                    let reference = p.next();
-
-                    let cancel_token = CancellationToken::new();
-                    let repo_path = clone_git_repository(
-                        self.job.build_dir(),
-                        url,
-                        reference,
-                        p,
-                        Some(1),
-                        cancel_token,
-                    )
-                    .await
-                    .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
-
-                    std::fs::rename(repo_path, path)
-                        .map_err(|e| outputln!("Failed to move repo path: {}", e.to_string()))?;
-
                     Ok(())
                 }
                 "checkout" => {
