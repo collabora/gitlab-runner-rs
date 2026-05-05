@@ -10,7 +10,8 @@ use wiremock::{Mock, MockServer};
 mod job;
 mod variables;
 pub use job::{
-    MockJob, MockJobArtifactWhen, MockJobBuilder, MockJobState, MockJobStepName, MockJobStepWhen,
+    MockJob, MockJobArtifactWhen, MockJobBuilder, MockJobGitInfo, MockJobState, MockJobStepName,
+    MockJobStepWhen,
 };
 
 mod api;
