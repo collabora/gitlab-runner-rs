@@ -46,6 +46,8 @@ gitlab-runner-mock = { path = "../gitlab-runner-mock" }
 futures = "0.3.32"
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
+assert_cmd = "2.2.1"
+rstest = "0.26.1"
 
 [build-dependencies]
 vergen-gitcl = "9.1.0"
