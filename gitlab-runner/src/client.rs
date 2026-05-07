@@ -307,8 +307,6 @@ pub enum GitCheckoutErrorInner {
     GitHeadPeel(#[from] gix::head::peel::Error),
     #[error(transparent)]
     ThreadJoinError(#[from] tokio::task::JoinError),
-    #[error("Checkout cancelled")]
-    Cancelled,
     #[error("Failed to find commit")]
     MissingCommit,
     #[error(transparent)]

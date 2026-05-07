@@ -11,7 +11,6 @@ use gitlab_runner::{
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
@@ -129,10 +128,9 @@ impl Run {
                         Some(path) => self.job.build_dir().join(path),
                         _ => self.job.build_dir().to_path_buf(),
                     };
-                    let cancel_token = CancellationToken::new();
                     let temp_repo_path = self
                         .job
-                        .clone_git_repository(cancel_token)
+                        .clone_git_repository()
                         .await
                         .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
 

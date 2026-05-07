@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
 use tokio_retry2::strategy::{FibonacciBackoff, jitter};
-use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 
 use crate::client::Error as ClientError;
@@ -524,34 +523,38 @@ impl Job {
     /// Fetch and checkout worktree for job
     ///
     /// This creates a new path for the repo as gitoxide deletes it on failure.
-    pub async fn clone_git_repository(
-        &self,
-        cancel_token: CancellationToken,
-    ) -> Result<PathBuf, GitCheckoutError> {
+    pub async fn clone_git_repository(&self) -> Result<PathBuf, GitCheckoutError> {
+        struct InterruptOnDrop {
+            should_interrupt: Arc<AtomicBool>,
+        }
+
+        impl Drop for InterruptOnDrop {
+            fn drop(&mut self) {
+                self.should_interrupt.store(true, Ordering::Relaxed);
+            }
+        }
+
         let parent_path = self.build_dir.to_owned();
         let repo_url = self.response.git_info.repo_url.to_owned();
         let head_ref = Some(self.response.git_info.sha.to_owned());
-        let should_interrupt: Arc<AtomicBool> = Default::default();
-        let should_interrupt_cancel = should_interrupt.clone();
         let refspecs: Vec<_> = self.response.git_info.refspecs.clone();
         let depth = Some(self.response.git_info.depth);
+        let should_interrupt: Arc<AtomicBool> = Default::default();
+        let _interrupt = InterruptOnDrop {
+            should_interrupt: should_interrupt.clone(),
+        };
 
         // offload the clone operation to one of the tokio runtimes blocking threads
-        tokio::select! {
-            result = tokio::task::spawn_blocking(move || {
-                clone_git_repository_sync(
-                    &parent_path,
-                    &repo_url,
-                    head_ref.as_deref(),
-                    refspecs,
-                    depth,
-                    &should_interrupt,
-                )
-            }) => result?,
-            _ = cancel_token.cancelled() => {
-                should_interrupt_cancel.store(true, Ordering::SeqCst);
-                Err(GitCheckoutErrorInner::Cancelled.into())
-            }
-        }
+        tokio::task::spawn_blocking(move || {
+            clone_git_repository_sync(
+                &parent_path,
+                &repo_url,
+                head_ref.as_deref(),
+                refspecs,
+                depth,
+                &should_interrupt,
+            )
+        })
+        .await?
     }
 }
