@@ -5,11 +5,9 @@ mod client;
 mod logging;
 use crate::client::Client;
 mod run;
-use crate::client::GitCheckoutErrorInner;
 use crate::run::Run;
 pub mod job;
-use client::{ClientMetadata, GitCheckoutError};
-use gix::{DynNestedProgress, clone, create, index, open, progress, refs, refspec, remote};
+use client::ClientMetadata;
 use hmac::Hmac;
 use hmac::Mac;
 use job::{Job, JobLog};
@@ -22,7 +20,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 mod runlist;
 use crate::runlist::RunList;
@@ -31,12 +29,7 @@ use futures::AsyncRead;
 use futures::prelude::*;
 use std::borrow::Cow;
 use std::fmt::Write;
-use std::num::NonZeroU32;
-use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use tokio::time::{Duration, sleep};
 use url::Url;
 
@@ -461,200 +454,4 @@ impl Runner {
             sleep(Duration::from_secs(5)).await;
         }
     }
-}
-
-// TODO: Should we re-export gix::progress to provide a means to monitor progress
-
-/// Fetch and checkout a given worktree on a thread
-///
-/// See: [clone_git_repository_sync]
-async fn clone_git_repository(
-    parent_path: &Path,
-    repo_url: &str,
-    head_ref: Option<&str>,
-    refspecs: impl IntoIterator<Item = impl AsRef<str>>,
-    depth: Option<u32>,
-    cancel_token: CancellationToken,
-) -> Result<PathBuf, GitCheckoutError> {
-    let parent_path = parent_path.to_owned();
-    let repo_url = repo_url.to_owned();
-    let head_ref = head_ref.map(|a| a.to_owned());
-    let should_interrupt: Arc<AtomicBool> = Default::default();
-    let should_interrupt_cancel = should_interrupt.clone();
-    let refspecs: Vec<_> = refspecs
-        .into_iter()
-        .map(|s| s.as_ref().to_owned())
-        .collect();
-    // offload the clone operation to one of the tokio runtimes blocking threads
-    tokio::select! {
-        result = tokio::task::spawn_blocking(move || {
-            clone_git_repository_sync(
-                &parent_path,
-                &repo_url,
-                head_ref.as_deref(),
-                refspecs,
-                depth,
-                &should_interrupt,
-            )
-        }) => result?,
-        _ = cancel_token.cancelled() => {
-            should_interrupt_cancel.store(true, Ordering::SeqCst);
-            Err(GitCheckoutErrorInner::Cancelled.into())
-        }
-    }
-}
-
-/// Fetch and checkout a given worktree
-///
-/// This creates a new path for the repo as gitoxide deletes it on failure.
-fn clone_git_repository_sync(
-    parent_path: &Path,
-    repo_url: &str,
-    head_ref: Option<&str>,
-    refspecs: impl IntoIterator<Item = impl AsRef<str>>,
-    depth: Option<u32>,
-    should_interrupt: &AtomicBool,
-) -> Result<PathBuf, GitCheckoutError> {
-    let repo_dir = tempfile::Builder::new()
-        .prefix("repo_")
-        .tempdir_in(parent_path)?;
-
-    // TODO: Should we expose the ability to interrupt / report progress
-    let mut progress = progress::Discard;
-
-    // TODO: Is Options::isolated correct here?
-    //  The url provided from gitlab has the credentials
-    let mut fetch = clone::PrepareFetch::new(
-        repo_url,
-        repo_dir.path(),
-        create::Kind::WithWorktree,
-        Default::default(),
-        open::Options::isolated(),
-    )?;
-
-    // Specify which refspecs are fetched from remote
-    let mut refspecs = refspecs
-        .into_iter()
-        .map(|s| {
-            refspec::parse(s.as_ref().into(), refspec::parse::Operation::Fetch)
-                .map(|r| r.to_owned())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut sha = None;
-
-    // Add object SHA to the fetch as `with_ref_name` does not support SHAs
-    if let Some(head_ref) = head_ref {
-        if let Ok(object_id) = gix::ObjectId::from_hex(head_ref.as_bytes()) {
-            let refspec = refspec::parse(
-                format!("+{head_ref}").as_str().into(),
-                refspec::parse::Operation::Fetch,
-            )?
-            .to_owned();
-            refspecs.push(refspec);
-            sha = Some(object_id);
-        } else {
-            let refspec = refspec::parse(
-                format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}")
-                    .as_str()
-                    .into(),
-                refspec::parse::Operation::Fetch,
-            )?
-            .to_owned();
-            refspecs.push(refspec);
-            fetch = fetch.with_ref_name(Some(head_ref))?
-        }
-    }
-
-    if !refspecs.is_empty() {
-        let mut fetch_opts = remote::ref_map::Options::default();
-        fetch_opts.extra_refspecs.extend(refspecs);
-        fetch = fetch.with_fetch_options(fetch_opts);
-    }
-
-    if let Some(depth) = depth.and_then(NonZeroU32::new) {
-        fetch = fetch.with_shallow(remote::fetch::Shallow::DepthAtRemote(depth));
-    }
-
-    let checkout_progress = progress.add_child("checkout".to_string());
-    let (checkout, outcome) = fetch.fetch_then_checkout(checkout_progress, should_interrupt)?;
-
-    trace!("git clone fetch outcome for {repo_url}: {outcome:?}");
-
-    let repo = checkout.persist();
-
-    // Make HEAD point to the given SHA
-    // See: gix::util::update_head
-    if let Some(sha) = sha {
-        repo.edit_reference(refs::transaction::RefEdit {
-            change: refs::transaction::Change::Update {
-                log: refs::transaction::LogChange {
-                    mode: refs::transaction::RefLog::AndReference,
-                    force_create_reflog: false,
-                    message: format!("clone repo at {}", sha).into(),
-                },
-                expected: refs::transaction::PreviousValue::Any,
-                new: refs::Target::Object(sha.to_owned()),
-            },
-            name: "HEAD".try_into()?,
-            deref: false,
-        })?;
-    }
-
-    let root_tree_id = if let Some(sha) = sha {
-        // Checkout worktree at specific SHA
-        repo.try_find_object(sha)?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-    } else if let Some(reference) = head_ref {
-        repo.try_find_reference(format!("refs/heads/{reference}").as_str())?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-            .peel_to_id()?
-            .object()?
-    } else {
-        // Checkout head
-        repo.head()?
-            .try_peel_to_id()?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-            .object()?
-    };
-    let root_tree = root_tree_id.peel_to_tree()?.id;
-
-    let index =
-        index::State::from_tree(&root_tree, &repo.objects, Default::default()).map_err(|err| {
-            clone::checkout::main_worktree::Error::IndexFromTree {
-                id: root_tree,
-                source: err,
-            }
-        })?;
-
-    let workdir =
-        repo.workdir()
-            .ok_or_else(|| clone::checkout::main_worktree::Error::BareRepository {
-                git_dir: repo.git_dir().to_owned(),
-            })?;
-
-    let files_progress = progress.add_child_with_id(
-        "files".to_string(),
-        clone::checkout::main_worktree::ProgressId::CheckoutFiles.into(),
-    );
-    let bytes_progress = progress.add_child_with_id(
-        "bytes".to_string(),
-        clone::checkout::main_worktree::ProgressId::BytesWritten.into(),
-    );
-    let mut index = index::File::from_state(index, repo.index_path());
-    let outcome = gix::worktree::state::checkout(
-        &mut index,
-        workdir,
-        repo.objects.clone().into_arc()?,
-        &files_progress,
-        &bytes_progress,
-        should_interrupt,
-        Default::default(),
-    )?;
-
-    trace!("git clone checkout outcome for {repo_url}: {outcome:?}");
-
-    index.write(Default::default())?;
-
-    Ok(repo_dir.keep())
 }
