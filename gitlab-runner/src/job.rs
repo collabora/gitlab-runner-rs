@@ -280,73 +280,34 @@ impl JobLog {
 }
 
 fn clone_git_repository_sync(
-    parent_path: &Path,
+    build_dir: PathBuf,
     repo_url: &str,
-    head_ref: Option<&str>,
-    refspecs: impl IntoIterator<Item = impl AsRef<str>>,
-    depth: Option<u32>,
+    sha: gix::ObjectId,
+    refspecs: Vec<gix::refspec::RefSpec>,
+    depth: u32,
     should_interrupt: &AtomicBool,
 ) -> Result<PathBuf, GitCheckoutError> {
-    let repo_dir = tempfile::Builder::new()
-        .prefix("repo_")
-        .tempdir_in(parent_path)?;
+    let repo_dir = tempfile::TempDir::with_prefix_in("repo_", &build_dir)?;
 
     // TODO: Should we expose the ability to interrupt / report progress
     let mut progress = gix::progress::Discard;
 
-    // TODO: Is Options::isolated correct here?
-    //  The url provided from gitlab has the credentials
+    let mut fetch_opts = gix::remote::ref_map::Options::default();
+    fetch_opts.extra_refspecs.extend(refspecs);
+
     let mut fetch = gix::clone::PrepareFetch::new(
         repo_url,
         repo_dir.path(),
         gix::create::Kind::WithWorktree,
         Default::default(),
         gix::open::Options::isolated(),
-    )?;
-
-    // Specify which refspecs are fetched from remote
-    let mut refspecs = refspecs
-        .into_iter()
-        .map(|s| {
-            gix::refspec::parse(s.as_ref().into(), gix::refspec::parse::Operation::Fetch)
-                .map(|r| r.to_owned())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut sha = None;
-
-    // Add object SHA to the fetch as `with_ref_name` does not support SHAs
-    if let Some(head_ref) = head_ref {
-        if let Ok(object_id) = gix::ObjectId::from_hex(head_ref.as_bytes()) {
-            let refspec = gix::refspec::parse(
-                format!("+{head_ref}").as_str().into(),
-                gix::refspec::parse::Operation::Fetch,
-            )?
-            .to_owned();
-            refspecs.push(refspec);
-            sha = Some(object_id);
-        } else {
-            let refspec = gix::refspec::parse(
-                format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}")
-                    .as_str()
-                    .into(),
-                gix::refspec::parse::Operation::Fetch,
-            )?
-            .to_owned();
-            refspecs.push(refspec);
-            fetch = fetch.with_ref_name(Some(head_ref))?
-        }
-    }
-
-    if !refspecs.is_empty() {
-        let mut fetch_opts = gix::remote::ref_map::Options::default();
-        fetch_opts.extra_refspecs.extend(refspecs);
-        fetch = fetch.with_fetch_options(fetch_opts);
-    }
-
-    if let Some(depth) = depth.and_then(NonZeroU32::new) {
-        fetch = fetch.with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(depth));
-    }
+    )?
+    .with_fetch_options(fetch_opts)
+    .with_shallow(if let Some(depth) = NonZeroU32::new(depth) {
+        gix::remote::fetch::Shallow::DepthAtRemote(depth)
+    } else {
+        gix::remote::fetch::Shallow::NoChange
+    });
 
     let checkout_progress = progress.add_child("checkout".to_string());
     let (checkout, outcome) = fetch.fetch_then_checkout(checkout_progress, should_interrupt)?;
@@ -357,38 +318,23 @@ fn clone_git_repository_sync(
 
     // Make HEAD point to the given SHA
     // See: gix::util::update_head
-    if let Some(sha) = sha {
-        repo.edit_reference(gix::refs::transaction::RefEdit {
-            change: gix::refs::transaction::Change::Update {
-                log: gix::refs::transaction::LogChange {
-                    mode: gix::refs::transaction::RefLog::AndReference,
-                    force_create_reflog: false,
-                    message: format!("clone repo at {}", sha).into(),
-                },
-                expected: gix::refs::transaction::PreviousValue::Any,
-                new: gix::refs::Target::Object(sha.to_owned()),
+    repo.edit_reference(gix::refs::transaction::RefEdit {
+        change: gix::refs::transaction::Change::Update {
+            log: gix::refs::transaction::LogChange {
+                mode: gix::refs::transaction::RefLog::AndReference,
+                force_create_reflog: false,
+                message: format!("clone repo at {}", sha).into(),
             },
-            name: "HEAD".try_into()?,
-            deref: false,
-        })?;
-    }
+            expected: gix::refs::transaction::PreviousValue::Any,
+            new: gix::refs::Target::Object(sha.to_owned()),
+        },
+        name: "HEAD".try_into()?,
+        deref: false,
+    })?;
 
-    let root_tree_id = if let Some(sha) = sha {
-        // Checkout worktree at specific SHA
-        repo.try_find_object(sha)?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-    } else if let Some(reference) = head_ref {
-        repo.try_find_reference(format!("refs/heads/{reference}").as_str())?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-            .peel_to_id()?
-            .object()?
-    } else {
-        // Checkout head
-        repo.head()?
-            .try_peel_to_id()?
-            .ok_or(GitCheckoutErrorInner::MissingCommit)?
-            .object()?
-    };
+    let root_tree_id = repo
+        .try_find_object(sha)?
+        .ok_or(GitCheckoutErrorInner::MissingCommit)?;
     let root_tree = root_tree_id.peel_to_tree()?.id;
 
     let index = gix::index::State::from_tree(&root_tree, &repo.objects, Default::default())
@@ -534,11 +480,21 @@ impl Job {
             }
         }
 
-        let parent_path = self.build_dir.to_owned();
+        let build_dir = self.build_dir.to_owned();
         let repo_url = self.response.git_info.repo_url.to_owned();
-        let head_ref = Some(self.response.git_info.sha.to_owned());
-        let refspecs: Vec<_> = self.response.git_info.refspecs.clone();
-        let depth = Some(self.response.git_info.depth);
+        let sha = gix::ObjectId::from_hex(self.response.git_info.sha.as_bytes())?;
+        let refspecs = self
+            .response
+            .git_info
+            .refspecs
+            .iter()
+            .map(|s| {
+                gix::refspec::parse(s.as_str().into(), gix::refspec::parse::Operation::Fetch)
+                    .map(|r| r.to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let depth = self.response.git_info.depth;
+
         let should_interrupt: Arc<AtomicBool> = Default::default();
         let _interrupt = InterruptOnDrop {
             should_interrupt: should_interrupt.clone(),
@@ -547,9 +503,9 @@ impl Job {
         // offload the clone operation to one of the tokio runtimes blocking threads
         tokio::task::spawn_blocking(move || {
             clone_git_repository_sync(
-                &parent_path,
+                build_dir,
                 &repo_url,
-                head_ref.as_deref(),
+                sha,
                 refspecs,
                 depth,
                 &should_interrupt,
