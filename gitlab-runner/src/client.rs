@@ -268,47 +268,13 @@ pub enum GitCheckoutErrorInner {
     #[error(transparent)]
     GitCheckout(#[from] gix::clone::checkout::main_worktree::Error),
     #[error(transparent)]
-    GitIndexFileWrite(#[from] gix::index::file::write::Error),
-    #[error(transparent)]
-    GitRefValidate(#[from] gix::index::validate::reference::name::Error),
-    #[error(transparent)]
-    GitRemoteFind(#[from] gix::remote::find::existing::Error),
-    #[error(transparent)]
-    GitRemoteConnect(#[from] gix::remote::connect::Error),
-    #[error(transparent)]
-    GitRemoteFetchPrepare(#[from] gix::remote::fetch::prepare::Error),
-    #[error(transparent)]
-    GitRemoteFetch(#[from] gix::remote::fetch::Error),
-    #[error(transparent)]
-    GitObjectFind(#[from] gix::object::find::Error),
-    #[error(transparent)]
-    GitObjectPeel(#[from] gix::object::peel::to_kind::Error),
-    #[error(transparent)]
-    GitObjsFindExisting(#[from] gix::objs::find::existing::Error),
-    #[error(transparent)]
     GitRefEdit(#[from] gix::reference::edit::Error),
-    #[error(transparent)]
-    GitRefIterInit(#[from] gix::reference::iter::init::Error),
-    #[error(transparent)]
-    GitRefFindExisting(#[from] gix::reference::find::existing::Error),
-    #[error(transparent)]
-    GitRefFind(#[from] gix::reference::find::Error),
-    #[error(transparent)]
-    GitRefPeel(#[from] gix::reference::peel::Error),
-    #[error(transparent)]
-    GitPackedBufferOpen(#[from] gix::refs::packed::buffer::open::Error),
     #[error(transparent)]
     GitRefspecParse(#[from] gix::refspec::parse::Error),
     #[error(transparent)]
     GitHashDecode(#[from] gix::hash::decode::Error),
     #[error(transparent)]
-    GitWorktreeCheckout(#[from] gix::worktree::state::checkout::Error),
-    #[error(transparent)]
-    GitHeadPeel(#[from] gix::head::peel::Error),
-    #[error(transparent)]
     ThreadJoinError(#[from] tokio::task::JoinError),
-    #[error("Failed to find commit")]
-    MissingCommit,
     #[error(transparent)]
     Write(#[from] std::io::Error),
 }

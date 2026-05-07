@@ -1,8 +1,7 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{
-    Client, GitCheckoutError, GitCheckoutErrorInner, JobArtifactFile, JobDependency, JobResponse,
-    JobVariable,
+    Client, GitCheckoutError, JobArtifactFile, JobDependency, JobResponse, JobVariable,
 };
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
@@ -11,7 +10,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::io::AsyncWrite;
 use tokio_retry2::strategy::{FibonacciBackoff, jitter};
 use tracing::{info, trace};
@@ -279,6 +278,8 @@ impl JobLog {
     }
 }
 
+static HEAD: LazyLock<gix::refs::FullName> = LazyLock::new(|| "HEAD".try_into().unwrap());
+
 fn clone_git_repository_sync(
     build_dir: PathBuf,
     repo_url: &str,
@@ -309,71 +310,19 @@ fn clone_git_repository_sync(
         gix::remote::fetch::Shallow::NoChange
     });
 
-    let checkout_progress = progress.add_child("checkout".to_string());
-    let (checkout, outcome) = fetch.fetch_then_checkout(checkout_progress, should_interrupt)?;
-
+    let fetch_progress = progress.add_child("fetch".to_string());
+    let (mut checkout, outcome) = fetch.fetch_then_checkout(fetch_progress, should_interrupt)?;
     trace!("git clone fetch outcome for {repo_url}: {outcome:?}");
 
-    let repo = checkout.persist();
-
-    // Make HEAD point to the given SHA
-    // See: gix::util::update_head
-    repo.edit_reference(gix::refs::transaction::RefEdit {
-        change: gix::refs::transaction::Change::Update {
-            log: gix::refs::transaction::LogChange {
-                mode: gix::refs::transaction::RefLog::AndReference,
-                force_create_reflog: false,
-                message: format!("clone repo at {}", sha).into(),
-            },
-            expected: gix::refs::transaction::PreviousValue::Any,
-            new: gix::refs::Target::Object(sha.to_owned()),
-        },
-        name: "HEAD".try_into()?,
-        deref: false,
-    })?;
-
-    let root_tree_id = repo
-        .try_find_object(sha)?
-        .ok_or(GitCheckoutErrorInner::MissingCommit)?;
-    let root_tree = root_tree_id.peel_to_tree()?.id;
-
-    let index = gix::index::State::from_tree(&root_tree, &repo.objects, Default::default())
-        .map_err(
-            |err| gix::clone::checkout::main_worktree::Error::IndexFromTree {
-                id: root_tree,
-                source: err,
-            },
-        )?;
-
-    let workdir = repo.workdir().ok_or_else(|| {
-        gix::clone::checkout::main_worktree::Error::BareRepository {
-            git_dir: repo.git_dir().to_owned(),
-        }
-    })?;
-
-    let files_progress = progress.add_child_with_id(
-        "files".to_string(),
-        gix::clone::checkout::main_worktree::ProgressId::CheckoutFiles.into(),
-    );
-    let bytes_progress = progress.add_child_with_id(
-        "bytes".to_string(),
-        gix::clone::checkout::main_worktree::ProgressId::BytesWritten.into(),
-    );
-    let mut index = gix::index::File::from_state(index, repo.index_path());
-    let outcome = gix::worktree::state::checkout(
-        &mut index,
-        workdir,
-        repo.objects.clone().into_arc()?,
-        &files_progress,
-        &bytes_progress,
-        should_interrupt,
-        Default::default(),
+    checkout.repo().reference(
+        HEAD.clone(),
+        sha,
+        gix::refs::transaction::PreviousValue::Any,
+        format!("clone repo at {sha}"),
     )?;
 
+    let (_repo, outcome) = checkout.main_worktree(progress, should_interrupt)?;
     trace!("git clone checkout outcome for {repo_url}: {outcome:?}");
-
-    index.write(Default::default())?;
-
     Ok(repo_dir.keep())
 }
 
