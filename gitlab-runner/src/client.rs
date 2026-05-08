@@ -259,6 +259,25 @@ impl JobResponse {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = GitCheckoutError,
+    parse_err_fn = GitStrategy::make_error,
+)]
+pub enum GitStrategy {
+    Clone,
+    Fetch,
+    None,
+    Empty,
+}
+
+impl GitStrategy {
+    fn make_error(s: &str) -> GitCheckoutError {
+        GitCheckoutErrorInner::BadGitStrategy(s.to_owned()).into()
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum GitCheckoutErrorInner {
     #[error(transparent)]
@@ -277,6 +296,8 @@ pub enum GitCheckoutErrorInner {
     ThreadJoinError(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Write(#[from] std::io::Error),
+    #[error("invalid GIT_STRATEGY: {0}")]
+    BadGitStrategy(String),
 }
 
 #[derive(Error, Debug)]

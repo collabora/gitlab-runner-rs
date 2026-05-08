@@ -1,7 +1,7 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
 use crate::client::{
-    Client, GitCheckoutError, JobArtifactFile, JobDependency, JobResponse, JobVariable,
+    Client, GitCheckoutError, GitStrategy, JobArtifactFile, JobDependency, JobResponse, JobVariable,
 };
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
@@ -9,6 +9,7 @@ use gix::NestedProgress;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::io::AsyncWrite;
@@ -415,10 +416,20 @@ impl Job {
      *  * git checkout $sha
      */
 
-    /// Fetch and checkout worktree for job
+    /// Fetch and checkout worktree for job, returning the checkout directory
     ///
-    /// This creates a new path for the repo as gitoxide deletes it on failure.
-    pub async fn clone_git_repository(&self) -> Result<PathBuf, GitCheckoutError> {
+    /// If GIT_STRATEGY is set to disable fetching (i.e. `none` or `empty`),
+    /// returns None.
+    pub async fn clone_git_repository(&self) -> Result<Option<PathBuf>, GitCheckoutError> {
+        if let Some(strategy) = self.variable("GIT_STRATEGY")
+            && matches!(
+                GitStrategy::from_str(strategy.value())?,
+                GitStrategy::None | GitStrategy::Empty
+            )
+        {
+            return Ok(None);
+        }
+
         struct InterruptOnDrop {
             should_interrupt: Arc<AtomicBool>,
         }
@@ -461,5 +472,6 @@ impl Job {
             )
         })
         .await?
+        .map(Some)
     }
 }

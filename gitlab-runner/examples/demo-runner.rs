@@ -128,11 +128,15 @@ impl Run {
                         Some(path) => self.job.build_dir().join(path),
                         _ => self.job.build_dir().to_path_buf(),
                     };
-                    let temp_repo_path = self
+                    let Some(temp_repo_path) = self
                         .job
                         .clone_git_repository()
                         .await
-                        .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?;
+                        .map_err(|e| outputln!("Failed to checkout repo: {}", e.to_string()))?
+                    else {
+                        outputln!("Git cloning is disabled, nothing to do");
+                        return Ok(());
+                    };
 
                     outputln!("Checked out to {:?}", temp_repo_path);
 

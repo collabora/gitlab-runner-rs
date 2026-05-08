@@ -37,6 +37,7 @@ rand = "0.10.0"
 tokio-util = { version = "0.7.18", features = [ "io" ] }
 tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
 gix = { version = "0.83.0", features = [ "blocking-http-transport-reqwest", "worktree-mutation" ] }
+strum = { version = "0.28.0", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1.50.0", features = [ "full", "test-util" ] }
