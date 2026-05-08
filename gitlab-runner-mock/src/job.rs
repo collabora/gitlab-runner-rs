@@ -118,6 +118,28 @@ pub struct MockJobArtifact {
 }
 
 #[derive(Clone, Debug)]
+pub struct MockJobGitInfo {
+    pub repo_url: String,
+    pub sha: String,
+    pub refspecs: Vec<String>,
+    pub depth: u32,
+}
+
+impl Default for MockJobGitInfo {
+    fn default() -> Self {
+        Self {
+            repo_url: "https://bla/dummy.git".to_string(),
+            sha: "265c14cf140a66cfc61e40e4ab45c95ba8df5ed1".to_string(),
+            refspecs: vec![
+                "+265c14cf140a66cfc61e40e4ab45c95ba8df5ed1:refs/pipelines/120".to_string(),
+                "+refs/heads/custom:refs/remotes/origin/custom".to_string(),
+            ],
+            depth: 50,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct MockJob {
     name: String,
     id: u64,
@@ -126,6 +148,7 @@ pub struct MockJob {
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
     artifacts: Vec<MockJobArtifact>,
+    git_info: MockJobGitInfo,
     inner: Arc<Mutex<MockJobInner>>,
 }
 
@@ -163,6 +186,7 @@ impl MockJob {
             steps: Vec::new(),
             dependencies: Vec::new(),
             artifacts: Vec::new(),
+            git_info: MockJobGitInfo::default(),
             inner: Arc::new(Mutex::new(MockJobInner {
                 state: MockJobState::Success,
                 state_updates: 2,
@@ -191,6 +215,10 @@ impl MockJob {
 
     pub fn artifacts(&self) -> &[MockJobArtifact] {
         &self.artifacts
+    }
+
+    pub fn git_info(&self) -> &MockJobGitInfo {
+        &self.git_info
     }
 
     pub fn variables(&self) -> &[MockJobVariable] {
@@ -296,6 +324,7 @@ pub struct MockJobBuilder {
     steps: Vec<MockJobStep>,
     dependencies: Vec<MockJob>,
     artifacts: Vec<MockJobArtifact>,
+    git_info: MockJobGitInfo,
 }
 
 impl MockJobBuilder {
@@ -384,6 +413,10 @@ impl MockJobBuilder {
         self.dependencies.push(dependency);
     }
 
+    pub fn git_info(&mut self, git_info: MockJobGitInfo) {
+        self.git_info = git_info;
+    }
+
     pub fn build(self) -> MockJob {
         assert!(!self.steps.is_empty(), "Should have at least one step");
         let inner = MockJobInner {
@@ -403,6 +436,7 @@ impl MockJobBuilder {
             variables: self.variables.into_values().collect(),
             dependencies: self.dependencies,
             artifacts: self.artifacts,
+            git_info: self.git_info,
             inner,
         }
     }

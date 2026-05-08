@@ -1,14 +1,20 @@
 //! This module describes a single gitlab job
 use crate::artifact::Artifact;
-use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
+use crate::client::{
+    Client, GitCheckoutError, GitStrategy, JobArtifactFile, JobDependency, JobResponse, JobVariable,
+};
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
+use gix::NestedProgress;
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::io::AsyncWrite;
 use tokio_retry2::strategy::{FibonacciBackoff, jitter};
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::client::Error as ClientError;
 
@@ -273,6 +279,54 @@ impl JobLog {
     }
 }
 
+static HEAD: LazyLock<gix::refs::FullName> = LazyLock::new(|| "HEAD".try_into().unwrap());
+
+fn clone_git_repository_sync(
+    build_dir: PathBuf,
+    repo_url: &str,
+    sha: gix::ObjectId,
+    refspecs: Vec<gix::refspec::RefSpec>,
+    depth: u32,
+    should_interrupt: &AtomicBool,
+) -> Result<PathBuf, GitCheckoutError> {
+    let repo_dir = tempfile::TempDir::with_prefix_in("repo_", &build_dir)?;
+
+    // TODO: Should we expose the ability to interrupt / report progress
+    let mut progress = gix::progress::Discard;
+
+    let mut fetch_opts = gix::remote::ref_map::Options::default();
+    fetch_opts.extra_refspecs.extend(refspecs);
+
+    let mut fetch = gix::clone::PrepareFetch::new(
+        repo_url,
+        repo_dir.path(),
+        gix::create::Kind::WithWorktree,
+        Default::default(),
+        gix::open::Options::isolated(),
+    )?
+    .with_fetch_options(fetch_opts)
+    .with_shallow(if let Some(depth) = NonZeroU32::new(depth) {
+        gix::remote::fetch::Shallow::DepthAtRemote(depth)
+    } else {
+        gix::remote::fetch::Shallow::NoChange
+    });
+
+    let fetch_progress = progress.add_child("fetch".to_string());
+    let (mut checkout, outcome) = fetch.fetch_then_checkout(fetch_progress, should_interrupt)?;
+    trace!("git clone fetch outcome for {repo_url}: {outcome:?}");
+
+    checkout.repo().reference(
+        HEAD.clone(),
+        sha,
+        gix::refs::transaction::PreviousValue::Any,
+        format!("clone repo at {sha}"),
+    )?;
+
+    let (_repo, outcome) = checkout.main_worktree(progress, should_interrupt)?;
+    trace!("git clone checkout outcome for {repo_url}: {outcome:?}");
+    Ok(repo_dir.keep())
+}
+
 /// A running Gitlab Job
 #[derive(Debug)]
 pub struct Job {
@@ -336,5 +390,88 @@ impl Job {
     /// Get a reference to the jobs build dir.
     pub fn build_dir(&self) -> &Path {
         &self.build_dir
+    }
+
+    /*
+     * Notes on gitlab-runner:
+     * https://gitlab.com/gitlab-org/gitlab-runner/-/blob/main/shells/abstract.go#L556
+     *
+     * gitlab runner:
+     *  * Clones to BuildDir
+     *  * Checks out git_info.sha and fetches all in git_info.refspecs
+     *  * Hardcoded username "gitlab-ci-token"
+     *  * 'credHelperCommand' is a shell command that's used to get the password from the env
+     *  * if ".git/shallow" exists use git "--unshallow" argument
+     *
+     * Steps:
+     *  * git config
+     *  * cleanup .git directory? {index.lock, modbules, etc.}
+     *  * git init
+     *  * cd repo
+     *  * git remote add origin
+     *  * git fetch origin
+     *     --no-recurse-submodules $refspecs
+     *     --depth $depth $fetch_flags
+     *     --unshallow if depth <= 0 && exists(.git/shallow)
+     *  * git checkout $sha
+     */
+
+    /// Fetch and checkout worktree for job, returning the checkout directory
+    ///
+    /// If GIT_STRATEGY is set to disable fetching (i.e. `none` or `empty`),
+    /// returns None.
+    pub async fn clone_git_repository(&self) -> Result<Option<PathBuf>, GitCheckoutError> {
+        if let Some(strategy) = self.variable("GIT_STRATEGY")
+            && matches!(
+                GitStrategy::from_str(strategy.value())?,
+                GitStrategy::None | GitStrategy::Empty
+            )
+        {
+            return Ok(None);
+        }
+
+        struct InterruptOnDrop {
+            should_interrupt: Arc<AtomicBool>,
+        }
+
+        impl Drop for InterruptOnDrop {
+            fn drop(&mut self) {
+                self.should_interrupt.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let build_dir = self.build_dir.to_owned();
+        let repo_url = self.response.git_info.repo_url.to_owned();
+        let sha = gix::ObjectId::from_hex(self.response.git_info.sha.as_bytes())?;
+        let refspecs = self
+            .response
+            .git_info
+            .refspecs
+            .iter()
+            .map(|s| {
+                gix::refspec::parse(s.as_str().into(), gix::refspec::parse::Operation::Fetch)
+                    .map(|r| r.to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let depth = self.response.git_info.depth;
+
+        let should_interrupt: Arc<AtomicBool> = Default::default();
+        let _interrupt = InterruptOnDrop {
+            should_interrupt: should_interrupt.clone(),
+        };
+
+        // offload the clone operation to one of the tokio runtimes blocking threads
+        tokio::task::spawn_blocking(move || {
+            clone_git_repository_sync(
+                build_dir,
+                &repo_url,
+                sha,
+                refspecs,
+                depth,
+                &should_interrupt,
+            )
+        })
+        .await?
+        .map(Some)
     }
 }

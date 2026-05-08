@@ -156,16 +156,13 @@ impl Respond for JobRequestResponder {
                     "project_name": "gitlab-test"
                 },
                 "git_info": {
-                    "repo_url": "https://bla/dummy.git",
+                    "repo_url": job.git_info().repo_url,
                     "ref": "custom",
-                    "sha": "265c14cf140a66cfc61e40e4ab45c95ba8df5ed1",
+                    "sha": job.git_info().sha,
                     "before_sha": "fc40ad32cdd36b814f07a540605110edc209a38c",
                     "ref_type": "branch",
-                    "refspecs": [
-                        "+265c14cf140a66cfc61e40e4ab45c95ba8df5ed1:refs/pipelines/120",
-                        "+refs/heads/custom:refs/remotes/origin/custom"
-                    ],
-                    "depth": 50
+                    "refspecs": job.git_info().refspecs,
+                    "depth": job.git_info().depth
                 },
                 "runner_info": {
                     "timeout": 3600,

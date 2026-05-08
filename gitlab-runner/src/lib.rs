@@ -19,8 +19,8 @@ use runlist::JobRunList;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
 use tracing::instrument::WithSubscriber;
+use tracing::{debug, warn};
 
 mod runlist;
 use crate::runlist::RunList;
@@ -31,7 +31,6 @@ use std::borrow::Cow;
 use std::fmt::Write;
 use std::path::PathBuf;
 use tokio::time::{Duration, sleep};
-use tracing::warn;
 use url::Url;
 
 #[doc(hidden)]

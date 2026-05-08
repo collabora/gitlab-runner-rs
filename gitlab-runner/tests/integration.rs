@@ -1,8 +1,10 @@
+use assert_cmd::Command;
+use assert_cmd::assert::OutputAssertExt;
 use futures::future;
 use gitlab_runner::job::Job;
 use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBuilder, outputln};
 use gitlab_runner_mock::{
-    GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
+    GitlabRunnerMock, MockJob, MockJobGitInfo, MockJobState, MockJobStepName, MockJobStepWhen,
 };
 use std::fmt::Debug;
 use std::future::Future;
@@ -13,6 +15,7 @@ use tracing::instrument::WithSubscriber;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 
+use rstest::rstest;
 use std::time::Duration;
 use tokio::sync::oneshot::{self, Receiver, Sender};
 use tokio::time::sleep;
@@ -745,6 +748,210 @@ async fn job_drain() {
 
         runner.drain().await;
         assert_eq!(0, runner.running());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+const GIT_BRANCH: &str = "main";
+const GIT_COMMITS: usize = 3;
+const GIT_FILE: &str = "file";
+const GIT_FILE_CONTENT: &str = "content";
+
+struct TestRepo {
+    dir: TempDir,
+    sha: String,
+}
+
+impl TestRepo {
+    fn file_url(&self) -> String {
+        format!("file://{}", self.dir.path().as_os_str().to_str().unwrap())
+    }
+
+    fn refspec(&self) -> String {
+        format!("+{}:refs/heads/{GIT_BRANCH}", self.sha)
+    }
+}
+
+#[rstest::fixture]
+fn test_repo() -> TestRepo {
+    let dir = tempfile::tempdir().unwrap();
+    Command::new("git")
+        .args(["init", "-b", GIT_BRANCH])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    Command::new("git")
+        .args(["config", "user.name", "test"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let contents_by_commit: [&str; GIT_COMMITS] = ["hello", "world", GIT_FILE_CONTENT];
+    for (i, content) in contents_by_commit.iter().enumerate() {
+        std::fs::write(dir.path().join(GIT_FILE), content).unwrap();
+        Command::new("git")
+            .args(["add", GIT_FILE])
+            .current_dir(dir.path())
+            .assert()
+            .success();
+        Command::new("git")
+            .args(["commit", "-m", &format!("Commit #{}", i + 1)])
+            .current_dir(dir.path())
+            .assert()
+            .success();
+    }
+
+    let mut sha =
+        std::fs::read_to_string(dir.path().join(format!(".git/refs/heads/{GIT_BRANCH}"))).unwrap();
+    sha.truncate(sha.trim_end().len());
+
+    // Ensure that HEAD switching actually works in the clones by changing the
+    // upstream repo HEAD to a different branch.
+    Command::new("git")
+        .args(["switch", "--orphan", "empty"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    TestRepo { dir, sha }
+}
+
+#[rstest]
+#[case(0)]
+#[case(1)]
+#[case(2)]
+#[tokio::test]
+async fn job_clone(test_repo: TestRepo, #[case] depth: u32) {
+    let mock = GitlabRunnerMock::start().await;
+    let mut builder = mock.job_builder("clone test".to_string());
+    builder.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_string()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    builder.git_info(MockJobGitInfo {
+        repo_url: test_repo.file_url(),
+        sha: test_repo.sha.clone(),
+        refspecs: vec![test_repo.refspec()],
+        depth,
+    });
+
+    let job = builder.build();
+    mock.enqueue_job(job.clone());
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    async move {
+        let got_job = runner
+            .request_job(async move |job| {
+                let cloned = job.clone_git_repository().await.unwrap().unwrap();
+
+                let head = std::fs::read_to_string(cloned.join(".git/HEAD")).unwrap();
+                assert_eq!(head.trim(), test_repo.sha);
+
+                let content = std::fs::read_to_string(cloned.join(GIT_FILE)).unwrap();
+                assert_eq!(content, GIT_FILE_CONTENT);
+
+                let count_cmd = Command::new("git")
+                    .args(["rev-list", "--count", "HEAD"])
+                    .current_dir(&cloned)
+                    .output()
+                    .unwrap()
+                    .assert()
+                    .success();
+                let count: u32 = String::from_utf8(count_cmd.get_output().stdout.clone())
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap();
+
+                assert_eq!(
+                    count,
+                    if depth == 0 {
+                        GIT_COMMITS as u32
+                    } else {
+                        depth
+                    }
+                );
+
+                SimpleRun::dummy(Ok(())).await
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+enum GitStrategyTest {
+    None,
+    Invalid,
+}
+
+#[rstest]
+#[case(GitStrategyTest::None)]
+#[case(GitStrategyTest::Invalid)]
+#[tokio::test]
+async fn job_clone_strategy_none(test_repo: TestRepo, #[case] strategy: GitStrategyTest) {
+    let mock = GitlabRunnerMock::start().await;
+    let mut builder = mock.job_builder("clone test".to_string());
+    builder.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_string()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    builder.add_variable(
+        "GIT_STRATEGY".to_string(),
+        format!("{strategy}"),
+        false,
+        false,
+    );
+    builder.git_info(MockJobGitInfo {
+        repo_url: test_repo.file_url(),
+        sha: test_repo.sha.clone(),
+        refspecs: vec![test_repo.refspec()],
+        depth: 0,
+    });
+
+    let job = builder.build();
+    mock.enqueue_job(job.clone());
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    async move {
+        let got_job = runner
+            .request_job(async move |job| {
+                let ret = job.clone_git_repository().await;
+                match strategy {
+                    GitStrategyTest::None => assert!(ret.unwrap().is_none()),
+                    GitStrategyTest::Invalid => {
+                        assert_eq!(
+                            ret.unwrap_err().0.to_string(),
+                            format!("invalid GIT_STRATEGY: {strategy}")
+                        );
+                    }
+                }
+                SimpleRun::dummy(Ok(())).await
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
     }
     .with_subscriber(subscriber)
     .await;

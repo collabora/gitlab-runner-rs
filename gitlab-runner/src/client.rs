@@ -225,6 +225,18 @@ pub(crate) struct JobDependency {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct JobGitInfo {
+    pub repo_url: String,
+    pub refspecs: Vec<String>,
+    pub sha: String,
+    // Note that this is already filled with the value of GIT_DEPTH:
+    // https://gitlab.com/gitlab-org/gitlab/-/blob/dd9009f7d9f57fdfd7496f14086c0f059f890688/app/presenters/ci/build_runner_presenter.rb#L164
+    pub depth: u32,
+    #[serde(flatten)]
+    unparsed: JsonValue,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct JobResponse {
     pub id: u64,
     pub token: String,
@@ -236,6 +248,7 @@ pub(crate) struct JobResponse {
     pub dependencies: Vec<JobDependency>,
     #[serde(deserialize_with = "deserialize_null_default")]
     pub artifacts: Vec<JobArtifact>,
+    pub git_info: JobGitInfo,
     #[serde(flatten)]
     unparsed: JsonValue,
 }
@@ -243,6 +256,60 @@ pub(crate) struct JobResponse {
 impl JobResponse {
     pub fn step(&self, name: Phase) -> Option<&JobStep> {
         self.steps.iter().find(|s| s.name == name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = GitCheckoutError,
+    parse_err_fn = GitStrategy::make_error,
+)]
+pub enum GitStrategy {
+    Clone,
+    Fetch,
+    None,
+    Empty,
+}
+
+impl GitStrategy {
+    fn make_error(s: &str) -> GitCheckoutError {
+        GitCheckoutErrorInner::BadGitStrategy(s.to_owned()).into()
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum GitCheckoutErrorInner {
+    #[error(transparent)]
+    GitClone(#[from] gix::clone::Error),
+    #[error(transparent)]
+    GitFetch(#[from] gix::clone::fetch::Error),
+    #[error(transparent)]
+    GitCheckout(#[from] gix::clone::checkout::main_worktree::Error),
+    #[error(transparent)]
+    GitRefEdit(#[from] gix::reference::edit::Error),
+    #[error(transparent)]
+    GitRefspecParse(#[from] gix::refspec::parse::Error),
+    #[error(transparent)]
+    GitHashDecode(#[from] gix::hash::decode::Error),
+    #[error(transparent)]
+    ThreadJoinError(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Write(#[from] std::io::Error),
+    #[error("invalid GIT_STRATEGY: {0}")]
+    BadGitStrategy(String),
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct GitCheckoutError(pub Box<GitCheckoutErrorInner>);
+
+impl<T> From<T> for GitCheckoutError
+where
+    GitCheckoutErrorInner: From<T>,
+{
+    fn from(value: T) -> Self {
+        Self(Box::new(value.into()))
     }
 }
 

@@ -36,6 +36,8 @@ hmac = "0.12.1"
 rand = "0.10.0"
 tokio-util = { version = "0.7.18", features = [ "io" ] }
 tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
+gix = { version = "0.83.0", features = [ "blocking-http-transport-reqwest", "worktree-mutation" ] }
+strum = { version = "0.28.0", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1.50.0", features = [ "full", "test-util" ] }
@@ -44,6 +46,8 @@ gitlab-runner-mock = { path = "../gitlab-runner-mock" }
 futures = "0.3.32"
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
+assert_cmd = "2.2.1"
+rstest = "0.26.1"
 
 [build-dependencies]
 vergen-gitcl = "9.1.0"
