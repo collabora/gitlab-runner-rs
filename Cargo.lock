@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "gitlab-runner"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "gitlab-runner-mock"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures",
  "http",
