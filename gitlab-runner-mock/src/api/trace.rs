@@ -32,6 +32,14 @@ impl Respond for JobTraceResponder {
             return ResponseTemplate::new(StatusCode::FORBIDDEN);
         };
 
+        // Recent versions of GitLab expect an empty content-type to imply JSON:
+        // https://gitlab.com/gitlab-org/gitlab/-/commit/c9b271bfba59e0464d7e7eed7344aab14b825aa3
+        // so hard-require it.
+        request
+            .headers
+            .get(&http::header::CONTENT_TYPE)
+            .expect("Missing content type");
+
         let (start, end) = if let Some(range) = request.headers.get("Content-Range") {
             let mut split = range
                 .to_str()

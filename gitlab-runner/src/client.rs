@@ -401,6 +401,7 @@ impl Client {
             .patch(url)
             .header("JOB-TOKEN", token)
             .header(reqwest::header::CONTENT_RANGE, range)
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
             .body(body)
             .send()
             .await?;
