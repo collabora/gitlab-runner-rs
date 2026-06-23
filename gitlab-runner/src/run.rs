@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use normalize_path::NormalizePath;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,6 +86,48 @@ where
     overall_result
 }
 
+fn artifact_path_matches<I: IntoIterator>(file_path: &Path, patterns: I) -> bool
+where
+    I::Item: AsRef<str>,
+{
+    patterns.into_iter().any(|test_path| {
+        let test_path = Path::new(test_path.as_ref());
+        let Some(test_path) = test_path.try_normalize() else {
+            return false;
+        };
+        match glob::Pattern::new(&test_path.to_string_lossy()) {
+            Ok(pattern) => file_path.ancestors().any(|p| {
+                pattern.matches_path_with(
+                    p,
+                    glob::MatchOptions {
+                        require_literal_separator: true,
+                        ..glob::MatchOptions::new()
+                    },
+                )
+            }),
+            Err(_) => file_path.ancestors().any(|p| p == test_path),
+        }
+    })
+}
+
+#[test]
+fn test_artifact_path_matches() {
+    assert!(artifact_path_matches(Path::new("abc"), &["abc"]));
+    assert!(artifact_path_matches(Path::new("abc"), &["a*c"]));
+    assert!(artifact_path_matches(Path::new("abc/d"), &["abc"]));
+    assert!(artifact_path_matches(Path::new("abc/d"), &["a*c"]));
+    assert!(!artifact_path_matches(Path::new("ab/c"), &["a*c"]));
+    assert!(artifact_path_matches(Path::new("abc"), &["."]));
+    assert!(artifact_path_matches(Path::new("abc"), &["./abc//"]));
+    assert!(artifact_path_matches(Path::new("a/b/c"), &["a/**/c"]));
+    assert!(artifact_path_matches(Path::new("a/b/d/e/f/c"), &["a/**/c"]));
+    assert!(artifact_path_matches(
+        Path::new("a/b/c.yaml"),
+        &["**/*.yaml"]
+    ));
+    assert!(artifact_path_matches(Path::new("["), &["["]));
+}
+
 async fn process_artifact<J, U>(
     artifact: &JobArtifact,
     script_result: JobResult,
@@ -124,16 +167,13 @@ where
     let mut uploaded = 0;
 
     for file in handler.get_uploadable_files().await? {
-        if artifact
-            .paths
-            .iter()
-            .any(|path| match glob::Pattern::new(path) {
-                Ok(pattern) => pattern.matches(&file.get_path()),
-                Err(_) => path == &file.get_path(),
-            })
-        {
-            let path = file.get_path();
-            match uploader.file(path.to_string()).await {
+        let file_path = Path::new(&file.get_path().as_ref()).normalize();
+
+        if artifact_path_matches(&file_path, &artifact.paths) {
+            match uploader
+                .file(file_path.to_string_lossy().into_owned())
+                .await
+            {
                 Ok(mut upload) => {
                     let mut data = file.get_data().await?;
                     match futures::io::copy(&mut data, &mut upload).await {

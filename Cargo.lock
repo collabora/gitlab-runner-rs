@@ -774,6 +774,7 @@ dependencies = [
  "gitlab-runner-mock",
  "glob",
  "hmac 0.13.0",
+ "normalize-path",
  "parking_lot",
  "pin-project",
  "rand 0.10.1",
@@ -1358,6 +1359,12 @@ dependencies = [
  "spin",
  "version_check",
 ]
+
+[[package]]
+name = "normalize-path"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5438dd2b2ff4c6df6e1ce22d825ed2fa93ee2922235cc45186991717f0a892d"
 
 [[package]]
 name = "nu-ansi-term"

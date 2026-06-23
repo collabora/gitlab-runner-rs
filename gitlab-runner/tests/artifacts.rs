@@ -17,6 +17,7 @@ use gitlab_runner_mock::{
 enum TestFile {
     Test,
     Test2,
+    TestDir,
 }
 
 #[async_trait::async_trait]
@@ -26,13 +27,15 @@ impl UploadableFile for TestFile {
     fn get_path(&self) -> Cow<'_, str> {
         match self {
             TestFile::Test => "test".into(),
-            TestFile::Test2 => "test2".into(),
+            TestFile::Test2 => "./test2".into(),
+            TestFile::TestDir => "dir/test".into(),
         }
     }
     async fn get_data(&self) -> Result<&'_ [u8], ()> {
         Ok(match self {
             TestFile::Test => b"testdata".as_slice(),
             TestFile::Test2 => b"testdata2".as_slice(),
+            TestFile::TestDir => b"testdata-dir".as_slice(),
         })
     }
 }
@@ -48,7 +51,9 @@ impl JobHandler<TestFile> for Upload {
     async fn get_uploadable_files(
         &mut self,
     ) -> Result<Box<dyn Iterator<Item = TestFile> + Send>, ()> {
-        Ok(Box::new([TestFile::Test, TestFile::Test2].into_iter()))
+        Ok(Box::new(
+            [TestFile::Test, TestFile::Test2, TestFile::TestDir].into_iter(),
+        ))
     }
 }
 
@@ -65,22 +70,20 @@ impl Download {
                 .expect("No artifacts to download");
             let mut names: Vec<_> = artifact.file_names().collect();
             names.sort_unstable();
-            assert_eq!(2, names.len());
-            assert_eq!(&["test", "test2"], names.as_slice());
+            assert_eq!(3, names.len());
+            assert_eq!(&["dir/test", "test", "test2"], names.as_slice());
 
-            let mut f = artifact.file("test").expect("Testfile not available");
-            assert_eq!(f.name(), "test");
-            let mut data = Vec::new();
-            f.read_to_end(&mut data).expect("Failed to read content");
-            assert_eq!("testdata".as_bytes(), &*data);
-            drop(f);
-
-            let mut f = artifact.file("test2").expect("Testfile not available");
-            assert_eq!(f.name(), "test2");
-            let mut data = Vec::new();
-            f.read_to_end(&mut data).expect("Failed to read content");
-            assert_eq!("testdata2".as_bytes(), &*data);
-            drop(f);
+            for (name, expected) in [
+                ("test", "testdata"),
+                ("test2", "testdata2"),
+                ("dir/test", "testdata-dir"),
+            ] {
+                let mut f = artifact.file(name).expect("Testfile not available");
+                assert_eq!(f.name(), name);
+                let mut data = Vec::new();
+                f.read_to_end(&mut data).expect("Failed to read content");
+                assert_eq!(expected.as_bytes(), &*data);
+            }
 
             /* Try reading first data file a second time */
             let mut f = artifact.file("test").expect("Testfile not available");
@@ -113,7 +116,11 @@ async fn upload_download() {
         MockJobStepWhen::OnSuccess,
         false,
     );
-    upload.add_artifact_paths(vec!["*".to_string()]);
+    upload.add_artifact_paths(vec![
+        "dir".to_string(),
+        "./*2".to_string(),
+        "test/".to_string(),
+    ]);
     let upload = upload.build();
     mock.enqueue_job(upload.clone());
 
@@ -236,7 +243,7 @@ async fn multiple_upload() {
                     let mut z = ZipArchive::new(std::io::Cursor::new(artifact.data.as_slice()))
                         .expect("failed to open zip archive");
                     saw_zip = true;
-                    assert_eq!(z.len(), 2);
+                    assert_eq!(z.len(), 3);
                     for ix in 0..z.len() {
                         let mut f = z.by_index(ix).expect("failed to get zip file");
                         match f.name() {
@@ -249,6 +256,11 @@ async fn multiple_upload() {
                                 let mut data = Vec::new();
                                 f.read_to_end(&mut data).expect("failed to read zip file");
                                 assert_eq!(b"testdata2", data.as_slice());
+                            }
+                            "dir/test" => {
+                                let mut data = Vec::new();
+                                f.read_to_end(&mut data).expect("failed to read zip file");
+                                assert_eq!(b"testdata-dir", data.as_slice());
                             }
                             _ => {
                                 unreachable!("unknown file in archive");
