@@ -4,6 +4,9 @@ use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBui
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
+use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+use metrics_util::{CompositeKey, MetricKind};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -745,6 +748,82 @@ async fn job_drain() {
 
         runner.drain().await;
         assert_eq!(0, runner.running());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+// set_default_local_recorder needs to be run on a single-thread async runtime.
+#[tokio::test(flavor = "current_thread")]
+async fn job_metrics() {
+    type SnapshotMap = HashMap<
+        CompositeKey,
+        (
+            Option<metrics::Unit>,
+            Option<metrics::SharedString>,
+            DebugValue,
+        ),
+    >;
+
+    fn get_counter(snapshot: &SnapshotMap, key: &str) -> u64 {
+        let Some((_, _, value)) = snapshot.get(&CompositeKey::new(
+            MetricKind::Counter,
+            metrics::Key::from_name(key.to_owned()),
+        )) else {
+            return 0;
+        };
+        let DebugValue::Counter(value) = value else {
+            panic!("unexpected value for {key}: {value:?}");
+        };
+        *value
+    }
+
+    fn get_gauge(snapshot: &SnapshotMap, key: &str) -> f64 {
+        let Some((_, _, value)) = snapshot.get(&CompositeKey::new(
+            MetricKind::Gauge,
+            metrics::Key::from_name(key.to_owned()),
+        )) else {
+            return 0.0;
+        };
+        let DebugValue::Gauge(value) = value else {
+            panic!("unexpected value for {key}: {value:?}");
+        };
+        value.into_inner()
+    }
+
+    let rec = DebuggingRecorder::new();
+    let _default_rec = metrics::set_default_local_recorder(&rec);
+    let snapshotter = rec.snapshotter();
+
+    let mock = GitlabRunnerMock::start().await;
+    let job = mock.add_dummy_job("job success".to_string());
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    async {
+        let snapshot = snapshotter.snapshot().into_hashmap();
+        assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-started"), 0);
+        assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-finished"), 0);
+        assert_eq!(get_gauge(&snapshot, "gitlab-runner-rs.jobs-running"), 0.0);
+
+        let snapshotter2 = snapshotter.clone();
+        let got_job = runner
+            .request_job(move |_| {
+                let snapshot = snapshotter2.snapshot().into_hashmap();
+                assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-started"), 1);
+                assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-finished"), 0);
+                assert_eq!(get_gauge(&snapshot, "gitlab-runner-rs.jobs-running"), 1.0);
+                SimpleRun::dummy(Ok(()))
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+
+        let snapshot = snapshotter.snapshot().into_hashmap();
+        assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-started"), 0);
+        assert_eq!(get_counter(&snapshot, "gitlab-runner-rs.jobs-finished"), 1);
+        assert_eq!(get_gauge(&snapshot, "gitlab-runner-rs.jobs-running"), 0.0);
     }
     .with_subscriber(subscriber)
     .await;

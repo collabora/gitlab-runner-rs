@@ -16,6 +16,9 @@ use crate::uploader::Uploader;
 use crate::{CancellableJobHandler, UploadableFile};
 use crate::{JobResult, Phase};
 
+const METRICS_COUNTER_JOBS_STARTED: &str = "gitlab-runner-rs.jobs-started";
+const METRICS_COUNTER_JOBS_FINISHED: &str = "gitlab-runner-rs.jobs-finished";
+
 async fn run<F, J, U, Ret>(
     job: Job,
     client: Client,
@@ -300,6 +303,8 @@ impl Run {
         U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
+        metrics::counter!(METRICS_COUNTER_JOBS_STARTED).increment(1);
+
         let cancel_token = CancellationToken::new();
 
         let job = Job::new(
@@ -359,5 +364,7 @@ impl Run {
             };
             self.update(state, &cancel_token).await;
         }
+
+        metrics::counter!(METRICS_COUNTER_JOBS_FINISHED).increment(1);
     }
 }
