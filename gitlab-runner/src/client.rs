@@ -21,7 +21,6 @@ where
 }
 
 const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
-const JOB_STATUS: &str = "Job-Status";
 
 #[derive(Debug, Default, Clone, Serialize)]
 struct FeaturesInfo {
@@ -250,8 +249,10 @@ impl JobResponse {
 pub enum Error {
     #[error("Unexpected reply code {0}")]
     UnexpectedStatus(StatusCode),
-    #[error("Job cancelled")]
-    JobCancelled,
+    // May occur if the job was cancelled, in which case the job token we're
+    // using gets invalidated.
+    #[error("Forbidden")]
+    Forbidden,
     #[error("Request failure {0}")]
     Request(#[from] reqwest::Error),
     #[error("Failed to write to destination {0}")]
@@ -336,13 +337,6 @@ impl Client {
         }
     }
 
-    fn check_for_job_cancellation(&self, response: &reqwest::Response) -> Result<(), Error> {
-        match response.headers().get(JOB_STATUS) {
-            Some(header) if header == "canceled" => Err(Error::JobCancelled),
-            _ => Ok(()),
-        }
-    }
-
     pub async fn update_job(
         &self,
         id: u64,
@@ -359,8 +353,6 @@ impl Client {
 
         let r = self.client.put(url).json(&update).send().await?;
 
-        self.check_for_job_cancellation(&r)?;
-
         let trace_update_interval = r
             .headers()
             .get(GITLAB_TRACE_UPDATE_INTERVAL)
@@ -369,6 +361,7 @@ impl Client {
             StatusCode::OK => Ok(JobUpdateReply {
                 trace_update_interval,
             }),
+            StatusCode::FORBIDDEN => Err(Error::Forbidden),
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
@@ -406,8 +399,6 @@ impl Client {
             .send()
             .await?;
 
-        self.check_for_job_cancellation(&r)?;
-
         let trace_update_interval = r
             .headers()
             .get(GITLAB_TRACE_UPDATE_INTERVAL)
@@ -417,6 +408,7 @@ impl Client {
             StatusCode::ACCEPTED => Ok(TraceReply {
                 trace_update_interval,
             }),
+            StatusCode::FORBIDDEN => Err(Error::Forbidden),
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }

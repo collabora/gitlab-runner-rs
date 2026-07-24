@@ -53,19 +53,16 @@ impl Respond for JobTraceResponder {
         };
 
         if let Some(job) = self.mock.get_job(id) {
-            if token != job.token() {
+            if token != job.token() || job.state() != MockJobState::Running {
                 ResponseTemplate::new(StatusCode::FORBIDDEN)
-            } else if job.state() != MockJobState::Running {
-                ResponseTemplate::new(StatusCode::FORBIDDEN)
-                    .insert_header("Job-Status", &*job.state().to_string())
             } else {
                 match job.append_log(request.body.clone(), start, end) {
                     Ok(()) => ResponseTemplate::new(StatusCode::ACCEPTED)
                         .insert_header(
                             "X-GitLab-Trace-Update-Interval",
-                            &*self.mock.update_interval().to_string(),
+                            self.mock.update_interval().to_string(),
                         )
-                        .insert_header("Job-Status", &*job.state().to_string()),
+                        .insert_header("Job-Status", job.state().to_string()),
                     Err(e) => ResponseTemplate::new(StatusCode::RANGE_NOT_SATISFIABLE)
                         .set_body_string(format!("{e:?}")),
                 }
