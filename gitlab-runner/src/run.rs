@@ -248,7 +248,7 @@ impl Run {
             .await
         {
             Ok(_reply) => (),
-            Err(crate::client::Error::JobCancelled) => cancel_token.cancel(),
+            Err(crate::client::Error::Forbidden) => cancel_token.cancel(),
             Err(err) => warn!("Failed to update job status: {:?}", err),
         }
     }
@@ -276,7 +276,7 @@ impl Run {
                 self.log_offset += len;
                 reply.trace_update_interval
             }
-            Err(crate::client::Error::JobCancelled) => {
+            Err(crate::client::Error::Forbidden) => {
                 cancel_token.cancel();
                 None
             }
