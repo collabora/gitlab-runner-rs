@@ -5,6 +5,8 @@ use tokio::sync::watch;
 
 use crate::job::JobLog;
 
+const METRICS_GAUGE_JOBS_RUNNING: &str = "gitlab-runner-rs.jobs-running";
+
 #[derive(Debug)]
 pub(crate) struct RunListEntry<K, V>
 where
@@ -45,10 +47,15 @@ impl<K, V> Inner<K, V>
 where
     K: Eq + std::hash::Hash,
 {
+    fn update_running_count(&self, n: usize) {
+        metrics::gauge!(METRICS_GAUGE_JOBS_RUNNING).set(n as u32);
+        self.changed.send_replace(n);
+    }
+
     fn remove(&self, key: &K) {
         let mut r = self.rundata.write();
         r.remove(key);
-        self.changed.send_replace(r.len());
+        self.update_running_count(r.len());
     }
 }
 
@@ -91,7 +98,7 @@ where
     pub(crate) fn insert(&mut self, id: K, data: V) -> RunListEntry<K, V> {
         let mut r = self.inner.rundata.write();
         r.insert(id.clone(), data.clone());
-        self.inner.changed.send_replace(r.len());
+        self.inner.update_running_count(r.len());
         RunListEntry {
             owner: self.inner.clone(),
             key: id,
