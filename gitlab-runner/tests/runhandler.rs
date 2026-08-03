@@ -135,7 +135,10 @@ async fn log_ping(job: &MockJob, control: &LoggerControl, mut patches: u32) -> u
     patches += 1;
 
     assert_eq!(job.log_patches(), patches);
-    assert_eq!(job.log_last(), Some(ping.as_bytes().to_vec()));
+    assert!(
+        job.log_last()
+            .is_some_and(|log| log.ends_with(ping.as_bytes()))
+    );
 
     patches
 }

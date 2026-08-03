@@ -22,6 +22,7 @@ where
 
 const GITLAB_TRACE_UPDATE_INTERVAL: &str = "X-GitLab-Trace-Update-Interval";
 const JOB_STATUS: &str = "Job-Status";
+const SHORT_TOKEN_LENGTH: usize = 9;
 
 #[derive(Debug, Default, Clone, Serialize)]
 struct FeaturesInfo {
@@ -290,6 +291,28 @@ pub(crate) struct Client {
     metadata: ClientMetadata,
 }
 
+// Reimplementation of gitlab-runners `ShortenToken` function.
+// This returns a view into the token without the standard prefixes, and shortened to 9 characters.
+// See: https://gitlab.com/gitlab-org/gitlab-runner/-/blob/654132dc91a40f80a4fd5bb290a18a13b7064aa0/helpers/shorten_token.go
+fn shorten_token<T: AsRef<str> + ?Sized>(token: &T) -> &str {
+    let token = token.as_ref();
+
+    // Match and remove ^glrt-
+    let token = token.strip_prefix("glrt-").unwrap_or(token);
+
+    // Match and remove ^t[123]_
+    let token = token
+        .strip_prefix('t')
+        .and_then(|t| t.strip_prefix(|c| ('1'..='3').contains(&c)))
+        .and_then(|t| t.strip_prefix('_'))
+        .unwrap_or(token);
+
+    // Match and remove ^glrtr-
+    let token = token.strip_prefix("glrtr-").unwrap_or(token);
+
+    token.get(..SHORT_TOKEN_LENGTH).unwrap_or(token)
+}
+
 impl Client {
     pub fn new(url: Url, token: String, system_id: String, metadata: ClientMetadata) -> Self {
         Self {
@@ -299,6 +322,33 @@ impl Client {
             system_id,
             metadata,
         }
+    }
+
+    pub fn get_app_version_line(&self) -> String {
+        format!(
+            "{} {} ({})",
+            self.metadata
+                .platform
+                .as_deref()
+                .unwrap_or("unknown gitlab-runner-rs runner"),
+            self.metadata.version.as_deref().unwrap_or("?.?.?"),
+            self.metadata
+                .revision
+                .as_deref()
+                .unwrap_or("unknown revision")
+        )
+    }
+
+    /// Get the runners identifier as displayed in brackets on the gitlab frontend.
+    ///
+    /// The value is the first 8 or 9 characters of the runners after stripping it's prefix,
+    /// it is alphanumeric and may include hyphens and underscores.
+    pub fn get_short_description(&self) -> &str {
+        shorten_token(&self.token)
+    }
+
+    pub fn system_id(&self) -> &str {
+        &self.system_id
     }
 
     pub async fn request_job(&self) -> Result<Option<JobResponse>, Error> {
@@ -537,6 +587,28 @@ mod test {
             },
             v
         );
+    }
+
+    #[test]
+    fn short_description_test() {
+        for (token, expected) in [
+            // no prefix
+            ("short", "short"),
+            ("veryverylongtoken", "veryveryl"),
+            // partition prefix only
+            ("t1_t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            ("t2_t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            ("t3_t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            ("t4_t9Wkyj-HGRkqQ-VWTGAr", "t4_t9Wkyj"),
+            // glrt prefix, with and without partition prefix
+            ("glrt-t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            ("glrt-t1_t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            // glrtr prefix, with and without partition prefix, though the latter should never happen
+            ("glrtr-t9Wkyj-HGRkqQ-VWTGAr", "t9Wkyj-HG"),
+            ("glrtr-t1_t9Wkyj-HGRkqQ-VWTGAr", "t1_t9Wkyj"),
+        ] {
+            assert_eq!(shorten_token(token), expected);
+        }
     }
 
     #[tokio::test]

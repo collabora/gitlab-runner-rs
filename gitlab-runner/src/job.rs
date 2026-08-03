@@ -312,6 +312,24 @@ impl Job {
         self.log.trace(data.as_ref());
     }
 
+    /// Print the runner information to the gitlab log
+    pub(crate) fn output_runner_header(&self) {
+        outputln!("Running with {}", self.client.get_app_version_line());
+        let short_description = self.client.get_short_description();
+
+        if !short_description.is_empty() {
+            let name = self
+                .variable("CI_RUNNER_DESCRIPTION")
+                .map_or_else(|| "unnamed".to_string(), |v| format!("{v}"));
+            outputln!(
+                "  on {} {}, system ID: {}",
+                name,
+                short_description,
+                self.client.system_id()
+            );
+        }
+    }
+
     /// Get the variable matching the given key
     pub fn variable(&self, key: &str) -> Option<Variable<'_>> {
         self.response.variables.get(key).map(|v| Variable { v })

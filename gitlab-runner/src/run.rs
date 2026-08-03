@@ -30,6 +30,8 @@ where
     U: UploadableFile + Send + 'static,
     Ret: Future<Output = Result<J, ()>>,
 {
+    job.output_runner_header();
+
     if let Err(e) = tokio::fs::create_dir(&build_dir).await {
         job.trace(format!("Failed to create build dir: {e}"));
         return Err(());

@@ -419,7 +419,16 @@ async fn job_log() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Success, job.state());
-        assert_eq!(b"aa\nbb\ncc\n", job.log().as_slice());
+
+        let log = job.log();
+
+        assert!(log.ends_with(b"aa\nbb\ncc\n"));
+
+        let header =
+            str::from_utf8(log.strip_suffix(b"aa\nbb\ncc\n").unwrap()).expect("Log wasn't utf8");
+
+        assert!(header.starts_with("Running with "));
+        assert!(header.contains("on Rust runner test fakerunne,"));
     }
     .with_subscriber(subscriber)
     .await;

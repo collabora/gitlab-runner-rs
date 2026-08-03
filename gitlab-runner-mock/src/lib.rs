@@ -63,7 +63,7 @@ impl GitlabRunnerMock {
         };
         let inner = Inner {
             server: m,
-            runner_token: "fakerunnertoken".to_string(),
+            runner_token: "glrt-fakerunnertoken".to_string(),
             jobs: Mutex::new(jobs),
             update_interval: Mutex::new(3),
             expected_metadata: Mutex::new(ExpectedMetadata::default()),
