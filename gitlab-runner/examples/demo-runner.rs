@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::io::{IsTerminal, Read};
 
 use anyhow::{Context, Result};
@@ -121,6 +122,15 @@ impl Run {
                             }
                         }
                     }
+                    Ok(())
+                }
+                "echo" => {
+                    let mut expanding = HashSet::new();
+                    let expanded = p
+                        .map(move |l| self.job.expand_vars_inner(l, true, true, &mut expanding))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    outputln!("{}", expanded);
                     Ok(())
                 }
                 _ => {

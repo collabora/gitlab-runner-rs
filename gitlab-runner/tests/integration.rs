@@ -4,6 +4,7 @@ use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, Runner, RunnerBui
 use gitlab_runner_mock::{
     GitlabRunnerMock, MockJob, MockJobState, MockJobStepName, MockJobStepWhen,
 };
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -670,8 +671,12 @@ async fn runner_delay() {
 
 #[tokio::test]
 async fn job_variables() {
-    const TEST_VARIABLE: &str = "TEST_VARIABLE";
-    const TEST_VALUE: &str = "a testing value";
+    const TEST_VARIABLE: (&str, &str) = ("TEST_VARIABLE", "a testing value");
+    const TEST_EXPAND_VARIABLE: (&str, &str) = ("TEST_EXPAND_VARIABLE", "$TEST_VARIABLE");
+    const TEST_EXPAND_TWICE_VARIABLE: (&str, &str) =
+        ("TEST_EXPAND_TWICE_VARIABLE", "$TEST_EXPAND_VARIABLE");
+    const TEST_RECURSIVE_VARIABLE: (&str, &str) =
+        ("TEST_RECURSIVE_VARIABLE", "$TEST_RECURSIVE_VARIABLE");
 
     let mock = GitlabRunnerMock::start().await;
     let mut builder = mock.job_builder("variables".to_string());
@@ -683,7 +688,30 @@ async fn job_variables() {
         MockJobStepWhen::OnSuccess,
         false,
     );
-    builder.add_variable(TEST_VARIABLE.to_owned(), TEST_VALUE.to_owned(), false, true);
+    builder.add_variable(
+        TEST_VARIABLE.0.to_owned(),
+        TEST_VARIABLE.1.to_owned(),
+        false,
+        true,
+    );
+    builder.add_variable(
+        TEST_EXPAND_VARIABLE.0.to_owned(),
+        TEST_EXPAND_VARIABLE.1.to_owned(),
+        false,
+        true,
+    );
+    builder.add_variable(
+        TEST_EXPAND_TWICE_VARIABLE.0.to_owned(),
+        TEST_EXPAND_TWICE_VARIABLE.1.to_owned(),
+        false,
+        false,
+    );
+    builder.add_variable(
+        TEST_RECURSIVE_VARIABLE.0.to_owned(),
+        TEST_RECURSIVE_VARIABLE.1.to_owned(),
+        false,
+        false,
+    );
 
     let job = builder.build();
     mock.enqueue_job(job.clone());
@@ -697,10 +725,67 @@ async fn job_variables() {
                 assert!(id.public());
                 assert!(!id.masked());
 
-                let test = job.variable(TEST_VARIABLE).unwrap();
-                assert_eq!(test.value(), TEST_VALUE);
+                let test = job.variable(TEST_VARIABLE.0).unwrap();
+                assert_eq!(test.value(), TEST_VARIABLE.1);
                 assert!(!test.public());
                 assert!(test.masked());
+
+                assert_eq!(
+                    job.expand_vars(
+                        format!("${}", TEST_EXPAND_VARIABLE.0).as_str(),
+                        false,
+                        false
+                    ),
+                    TEST_VARIABLE.1,
+                );
+                assert_eq!(
+                    job.expand_vars(format!("${}", TEST_EXPAND_VARIABLE.0).as_str(), true, false),
+                    format!("'{}'", TEST_VARIABLE.1),
+                );
+                assert_eq!(
+                    job.expand_vars(
+                        format!("${{{}}}", TEST_EXPAND_VARIABLE.0).as_str(),
+                        false,
+                        false
+                    ),
+                    TEST_VARIABLE.1,
+                );
+                assert_eq!(
+                    job.expand_vars(
+                        format!("${}", TEST_EXPAND_TWICE_VARIABLE.0).as_str(),
+                        false,
+                        false,
+                    ),
+                    TEST_VARIABLE.1,
+                );
+                assert_eq!(
+                    job.expand_vars(
+                        format!("prefix-${}-suffix", TEST_EXPAND_TWICE_VARIABLE.0).as_str(),
+                        false,
+                        true,
+                    ),
+                    "prefix-<MASKED>-suffix",
+                );
+                assert_eq!(
+                    job.expand_vars(
+                        format!("${}", TEST_RECURSIVE_VARIABLE.0).as_str(),
+                        false,
+                        true,
+                    ),
+                    "",
+                );
+                let mut expanding = HashSet::new();
+                assert_eq!(
+                    format!(
+                        "${} ${}",
+                        TEST_EXPAND_TWICE_VARIABLE.0, TEST_EXPAND_VARIABLE.0
+                    )
+                    .split_whitespace()
+                    .map(|l| job.expand_vars_inner(l, true, false, &mut expanding,))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                    "'a testing value' 'a testing value'",
+                );
 
                 SimpleRun::dummy(Ok(())).await
             })
