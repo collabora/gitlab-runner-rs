@@ -3,7 +3,8 @@ use crate::artifact::Artifact;
 use crate::client::{Client, JobArtifactFile, JobDependency, JobResponse, JobVariable};
 use crate::outputln;
 use bytes::{Bytes, BytesMut};
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
@@ -32,6 +33,15 @@ impl<'a> Variable<'a> {
     /// Get the value of the variable
     pub fn value(&self) -> &'a str {
         &self.v.value
+    }
+
+    /// Return the value of the variable or "<MASKED>"
+    pub fn masked_value(&self) -> &'a str {
+        if self.masked() {
+            "<MASKED>"
+        } else {
+            &self.v.value
+        }
     }
 
     /// Whether or not the variable is masked
@@ -331,6 +341,50 @@ impl Job {
                 job: self,
                 dependency,
             })
+    }
+
+    /// Returns `line` with variables expanded.
+    ///
+    /// When `quote` is `true` variables are quoted and special characters are escaped to retain their literal meaning in Unix shell syntax.
+    /// When `mask` is `true` the masked variables are replaced making the output suitable for logging.
+    ///
+    /// Recursive variable expand to empty strings
+    pub fn expand_vars<'s>(&self, line: &'s str, quote: bool, mask: bool) -> Cow<'s, str> {
+        self.expand_vars_inner(line, quote, mask, &mut HashSet::new())
+    }
+
+    /// See [`Job::expand_vars`]
+    ///
+    /// This function must be supplied with an empty `HashMap<String>` that is used to track variables to avoid infinite loops.
+    pub fn expand_vars_inner<'s>(
+        &self,
+        line: &'s str,
+        quote: bool,
+        mask: bool,
+        expanding: &mut HashSet<String>,
+    ) -> Cow<'s, str> {
+        shellexpand::env_with_context_no_errors(line, |var| {
+            if !expanding.insert(var.to_owned()) {
+                return Some("".into());
+            }
+
+            let value =
+                self.variable(var).map_or(
+                    "",
+                    |v: Variable<'_>| if mask { v.masked_value() } else { v.value() },
+                );
+
+            let expanded = self.expand_vars_inner(value, false, mask, expanding);
+            expanding.remove(var);
+            Some(
+                if quote {
+                    shell_words::quote(expanded.as_ref())
+                } else {
+                    expanded
+                }
+                .into_owned(),
+            )
+        })
     }
 
     /// Get a reference to the jobs build dir.

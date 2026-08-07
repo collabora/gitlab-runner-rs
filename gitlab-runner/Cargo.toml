@@ -37,6 +37,8 @@ rand = "0.10.1"
 tokio-util = { version = "0.7.18", features = [ "io" ] }
 tokio-retry2 = { version = "0.9.1", features = ["jitter"] }
 normalize-path = "0.2.1"
+shellexpand = "3.1.2"
+shell-words = "1.1.1"
 
 [dev-dependencies]
 tokio = { version = "1.50.0", features = [ "full", "test-util" ] }
