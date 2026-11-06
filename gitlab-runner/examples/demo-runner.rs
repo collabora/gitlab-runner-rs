@@ -11,6 +11,7 @@ use gitlab_runner::{
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
@@ -238,9 +239,17 @@ async fn main() -> Result<()> {
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
 
-    tokio::select! {
-        r = runner
-        .run(
+    let shutdown = CancellationToken::new();
+    let signals = async {
+        tokio::select! {
+            _ = term.recv() => info!("Got TERM: draining jobs"),
+            _ = int.recv() => info!("Got INT: draining jobs"),
+        }
+        shutdown.cancel();
+    };
+
+    let (result, _) = tokio::join!(
+        runner.run_until_shutdown(
             move |job| async move {
                 let amount = match job.variable("AMOUNT") {
                     Some(v) => v.value().parse().expect("Amount not a number"),
@@ -251,12 +260,10 @@ async fn main() -> Result<()> {
                 Ok(Run::new(job, amount))
             },
             8,
-        ) => match r {
-                Ok(_) => info!("Runner exited"),
-                Err(e) => panic!("Failed to pick up new jobs: {e}")
-        },
-        _ = term.recv() => info!("Got TERM: exiting!"),
-        _ = int.recv() => info!("Got INT: exiting!"),
-    }
+            &shutdown,
+        ),
+        signals
+    );
+    result.context("Failed to run or drain jobs")?;
     Ok(())
 }

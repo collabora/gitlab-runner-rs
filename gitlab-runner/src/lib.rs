@@ -445,15 +445,48 @@ impl Runner {
         U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
-        loop {
-            self.wait_for_space(maximum).await;
+        self.run_until_shutdown(process, maximum, &CancellationToken::new())
+            .await
+    }
+
+    /// Run jobs until `shutdown` is cancelled, then wait for all running jobs to finish.
+    ///
+    /// Once shutdown is observed, no new jobs are requested and any already-received jobs are
+    /// drained, as if [`Runner::drain`] were called.
+    pub async fn run_until_shutdown<F, U, J, Ret>(
+        &mut self,
+        process: F,
+        maximum: usize,
+        shutdown: &CancellationToken,
+    ) -> Result<(), client::Error>
+    where
+        F: Fn(Job) -> Ret + Sync + Send + 'static + Clone,
+        J: CancellableJobHandler<U> + Send + 'static,
+        U: UploadableFile + Send + 'static,
+        Ret: Future<Output = Result<J, ()>> + Send + 'static,
+    {
+        while !shutdown.is_cancelled() {
+            // biased: always observe shutdown before starting more work
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => break,
+                _ = self.wait_for_space(maximum) => (),
+            }
+
             match self.request_job(process.clone()).await {
                 /* continue to pick up a new job straight away */
                 Ok(true) => continue,
                 Ok(false) => (),
                 Err(e) => warn!("Couldn't get a job from gitlab: {:?}", e),
             }
-            sleep(Duration::from_secs(5)).await;
+
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = sleep(Duration::from_secs(5)) => (),
+            }
         }
+
+        self.drain().await;
+        Ok(())
     }
 }
