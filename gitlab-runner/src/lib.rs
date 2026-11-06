@@ -445,15 +445,70 @@ impl Runner {
         U: UploadableFile + Send + 'static,
         Ret: Future<Output = Result<J, ()>> + Send + 'static,
     {
+        self.run_until_shutdown(process, maximum, std::future::pending::<()>())
+            .await
+    }
+
+    /// Run jobs until `shutdown` completes, then wait for all running jobs to finish.
+    ///
+    /// No new job requests are started after shutdown is observed. Since
+    /// [`Runner::request_job`] is not cancel safe, an in-flight request is allowed to
+    /// complete; if it receives a job, that job is started and drained as well.
+    ///
+    /// See `examples/demo-runner.rs` for an example that uses SIGTERM and SIGINT to trigger
+    /// graceful shutdown.
+    pub async fn run_until_shutdown<F, U, J, Ret, Shutdown>(
+        &mut self,
+        process: F,
+        maximum: usize,
+        shutdown: Shutdown,
+    ) -> Result<(), client::Error>
+    where
+        F: Fn(Job) -> Ret + Sync + Send + 'static + Clone,
+        J: CancellableJobHandler<U> + Send + 'static,
+        U: UploadableFile + Send + 'static,
+        Ret: Future<Output = Result<J, ()>> + Send + 'static,
+        Shutdown: Future + Send,
+    {
+        tokio::pin!(shutdown);
+
         loop {
-            self.wait_for_space(maximum).await;
-            match self.request_job(process.clone()).await {
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => break,
+                _ = self.wait_for_space(maximum) => (),
+            }
+
+            let mut request = Box::pin(self.request_job(process.clone()));
+            let mut shutdown_received = false;
+            let result = tokio::select! {
+                biased;
+                _ = &mut shutdown => {
+                    shutdown_received = true;
+                    request.await
+                },
+                result = &mut request => result,
+            };
+            match result {
                 /* continue to pick up a new job straight away */
-                Ok(true) => continue,
+                Ok(true) if !shutdown_received => continue,
                 Ok(false) => (),
                 Err(e) => warn!("Couldn't get a job from gitlab: {:?}", e),
+                Ok(true) => (),
             }
-            sleep(Duration::from_secs(5)).await;
+
+            if shutdown_received {
+                break;
+            }
+
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => break,
+                _ = sleep(Duration::from_secs(5)) => (),
+            }
         }
+
+        self.drain().await;
+        Ok(())
     }
 }
