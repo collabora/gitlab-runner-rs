@@ -142,7 +142,7 @@ impl Respond for JobRequestResponder {
                     value
                 })
                 .collect();
-            ResponseTemplate::new(StatusCode::CREATED).set_body_json(json!({
+            let response = ResponseTemplate::new(StatusCode::CREATED).set_body_json(json!({
                 "id": job.id(),
                 "token": job.token(),
                 "allow_git_fetch": true,
@@ -218,7 +218,9 @@ impl Respond for JobRequestResponder {
                         "reached_max_descendant_pipelines_depth"
                     ]
                 }
-            }))
+            }));
+            self.mock.notify_job_assigned();
+            response
         } else {
             ResponseTemplate::new(StatusCode::NO_CONTENT)
         }

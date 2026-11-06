@@ -40,6 +40,8 @@ struct ArtifactDownloadsCounter {
     failure_count: u32,
 }
 
+type JobAssignedHook = Arc<dyn Fn() + Send + Sync>;
+
 struct Inner {
     server: MockServer,
     runner_token: String,
@@ -47,6 +49,7 @@ struct Inner {
     update_interval: Mutex<u32>,
     expected_metadata: Mutex<ExpectedMetadata>,
     artifact_downloads_counter: Mutex<ArtifactDownloadsCounter>,
+    on_job_assigned: Mutex<Option<JobAssignedHook>>,
 }
 
 #[derive(Clone)]
@@ -68,6 +71,7 @@ impl GitlabRunnerMock {
             update_interval: Mutex::new(3),
             expected_metadata: Mutex::new(ExpectedMetadata::default()),
             artifact_downloads_counter: Mutex::new(ArtifactDownloadsCounter::default()),
+            on_job_assigned: Mutex::new(None),
         };
         let server = Self {
             inner: Arc::new(inner),
@@ -208,6 +212,20 @@ impl GitlabRunnerMock {
 
     pub fn set_expected_metadata_architecture<S: Into<String>>(&self, architecture: S) {
         self.inner.expected_metadata.lock().unwrap().architecture = Some(architecture.into());
+    }
+
+    pub(crate) fn notify_job_assigned(&self) {
+        let hook = self.inner.on_job_assigned.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// Register a callback invoked once a job request has assigned a job
+    /// (marked it running server-side), strictly before the response is sent
+    /// to the runner. The callback must not block.
+    pub fn set_on_job_assigned<F: Fn() + Send + Sync + 'static>(&self, hook: F) {
+        *self.inner.on_job_assigned.lock().unwrap() = Some(Arc::new(hook));
     }
 
     pub fn set_inject_artifact_download_failures(&self, failure_count: u32) {
