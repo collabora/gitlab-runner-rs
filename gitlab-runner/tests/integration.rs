@@ -566,6 +566,50 @@ async fn runner_run() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn runner_run_until_shutdown_drains_jobs() {
+    let mock = GitlabRunnerMock::start().await;
+    let jobs = TestJobs::new(mock.clone());
+    jobs.add_job();
+    jobs.add_job();
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let jobs_for_runner = jobs.clone();
+    let mut runner_task = tokio::spawn(
+        async move {
+            runner
+                .run_until_shutdown(
+                    {
+                        let jobs = jobs_for_runner.clone();
+                        move |job| future::ready(Ok(jobs.register(&job)))
+                    },
+                    1,
+                    shutdown_rx,
+                )
+                .await
+        }
+        .with_subscriber(subscriber),
+    );
+
+    while jobs.running() == 0 {
+        tokio::task::yield_now().await;
+    }
+
+    shutdown_tx.send(()).unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut runner_task)
+            .await
+            .is_err(),
+        "runner should wait for the active job to finish"
+    );
+
+    jobs.jobs()[0].complete(()).await;
+    runner_task.await.unwrap().unwrap();
+    assert_eq!(MockJobState::Success, jobs.jobs()[0].job.state());
+    assert!(jobs.jobs()[1].is_pending());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn runner_limit() {
     //tokio::time::pause();
     const JOB_LIMIT: usize = 3;
