@@ -14,8 +14,8 @@ pub struct ArtifactFile<'a>(ZipFile<'a, Box<dyn ReadSeek + Send>>);
 
 impl ArtifactFile<'_> {
     /// Get the name of the file
-    pub fn name(&self) -> ZipResult<Cow<'_, str>> {
-        self.0.name()
+    pub fn name(&self) -> std::io::Result<Cow<'_, str>> {
+        self.0.name().map_err(std::io::Error::other)
     }
 
     /// Get the safe path of the file
@@ -53,8 +53,10 @@ impl Artifact {
     ///
     /// The returned file name isn't sanatized in any way and should *not* be used as a path on the
     /// filesystem. To get a safe path of a given file use [`ArtifactFile::path`]
-    pub fn file_names(&self) -> impl Iterator<Item = ZipResult<Cow<'_, str>>> {
-        self.zip.file_names()
+    pub fn file_names(&self) -> impl Iterator<Item = std::io::Result<Cow<'_, str>>> {
+        self.zip
+            .file_names()
+            .map(|name| name.map_err(std::io::Error::other))
     }
 
     /// Get a file in the artifact by name

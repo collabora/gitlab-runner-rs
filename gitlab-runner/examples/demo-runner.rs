@@ -11,7 +11,7 @@ use gitlab_runner::{
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
 
@@ -112,7 +112,7 @@ impl Run {
                                     let name = match f.name() {
                                         Ok(name) => name.into_owned(),
                                         Err(e) => {
-                                            error!("Failed to get file name: {e}");
+                                            outputln!("Failed to get file name: {}\n", e);
                                             continue;
                                         }
                                     };

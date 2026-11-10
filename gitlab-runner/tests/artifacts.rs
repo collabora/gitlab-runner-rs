@@ -70,7 +70,7 @@ impl Download {
                 .expect("No artifacts to download");
             let mut names: Vec<_> = artifact
                 .file_names()
-                .collect::<zip::result::ZipResult<Vec<_>>>()
+                .collect::<std::io::Result<Vec<_>>>()
                 .expect("Failed to get artifact file names");
             names.sort_unstable();
             assert_eq!(3, names.len());
