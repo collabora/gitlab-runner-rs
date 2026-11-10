@@ -8,11 +8,9 @@ use wiremock::{Request, Respond};
 use crate::{GitlabRunnerMock, MockJobState};
 
 /*
-  jobs/id => 200  if ok;
+  jobs/id => 200 if ok;
 
-  403 if cancelled
-  < job-status: canceled in header
-}
+  403 if job token is invalid or the job was cancelled
 */
 
 #[derive(Default, Deserialize)]

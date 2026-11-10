@@ -35,29 +35,22 @@ impl Respond for JobUpdateResponder {
             .unwrap();
 
         if let Some(job) = self.mock.get_job(id) {
-            if r.token != job.token() {
+            if r.token != job.token() || job.state() != MockJobState::Running {
                 ResponseTemplate::new(StatusCode::FORBIDDEN)
             } else {
-                let r = match (job.state(), r.state) {
-                    (MockJobState::Running, MockJobState::Success) => {
-                        job.update_state(r.state);
-                        ResponseTemplate::new(StatusCode::OK)
-                    }
-                    (MockJobState::Running, MockJobState::Failed) => {
-                        job.update_state(r.state);
-                        ResponseTemplate::new(StatusCode::OK)
-                    }
-                    (MockJobState::Running, MockJobState::Running) => {
-                        job.update_state(r.state);
-                        ResponseTemplate::new(StatusCode::OK)
-                    }
-                    (current_state, _) if current_state != MockJobState::Running => {
-                        ResponseTemplate::new(StatusCode::FORBIDDEN)
-                    }
-                    _ => panic!("Invalid state change"),
-                };
+                assert!(
+                    matches!(
+                        r.state,
+                        MockJobState::Success | MockJobState::Failed | MockJobState::Running
+                    ),
+                    "Invalid state change from {} -> {}",
+                    job.state(),
+                    r.state,
+                );
 
-                r.append_header("Job-Status", &*job.state().to_string())
+                job.update_state(r.state);
+                ResponseTemplate::new(StatusCode::OK)
+                    .append_header("Job-Status", job.state().to_string())
             }
         } else {
             ResponseTemplate::new(StatusCode::NOT_FOUND)
