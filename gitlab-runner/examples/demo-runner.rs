@@ -114,7 +114,7 @@ impl Run {
                                         s.clear();
                                         s.push_str("Failed to read file to text");
                                     }
-                                    (f.name().to_string(), s)
+                                    (f.name().expect("Failed to get file name").into_owned(), s)
                                 };
                                 outputln!("=== File: {} ===", name);
                                 outputln!("{}", data);

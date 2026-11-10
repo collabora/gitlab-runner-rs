@@ -1,5 +1,6 @@
 //! Helpers for artifacts downloaded from gitlab
 use std::{
+    borrow::Cow,
     io::{Read, Seek},
     path::PathBuf,
 };
@@ -13,7 +14,7 @@ pub struct ArtifactFile<'a>(ZipFile<'a, Box<dyn ReadSeek + Send>>);
 
 impl ArtifactFile<'_> {
     /// Get the name of the file
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> ZipResult<Cow<'_, str>> {
         self.0.name()
     }
 
@@ -52,7 +53,7 @@ impl Artifact {
     ///
     /// The returned file name isn't sanatized in any way and should *not* be used as a path on the
     /// filesystem. To get a safe path of a given file use [`ArtifactFile::path`]
-    pub fn file_names(&self) -> impl Iterator<Item = &str> {
+    pub fn file_names(&self) -> impl Iterator<Item = ZipResult<Cow<'_, str>>> {
         self.zip.file_names()
     }
 
