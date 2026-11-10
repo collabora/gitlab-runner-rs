@@ -9,6 +9,7 @@ use gitlab_runner::job::Job;
 use gitlab_runner::{
     GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile, outputln,
 };
+use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{debug, info};
@@ -214,6 +215,8 @@ async fn main() -> Result<()> {
         .with(fmt.with_filter(envfilter))
         .with(layer)
         .init();
+
+    PrometheusBuilder::new().install().unwrap();
 
     info!("Using {} as build storage prefix", dir.path().display());
 
