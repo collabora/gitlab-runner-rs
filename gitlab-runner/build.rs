@@ -1,9 +1,10 @@
-use vergen_gitcl::{Emitter, GitclBuilder};
+use vergen_gitcl::{Emitter, Gitcl};
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Only emit git enabled variables if they're valid (in a git tree)
+    let gitcl = Gitcl::builder().dirty(true).sha(true).build();
     let _ = Emitter::default()
-        .add_instructions(&GitclBuilder::default().dirty(true).sha(true).build()?)?
+        .add_instructions(&gitcl)?
         .fail_on_error()
         .emit();
     Ok(())
