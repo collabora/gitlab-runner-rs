@@ -14,27 +14,6 @@ fn zip_error_to_io(error: zip::result::ZipError) -> std::io::Error {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::zip_error_to_io;
-    use std::io::{Error, ErrorKind};
-    use zip::result::ZipError;
-
-    #[test]
-    fn preserves_io_errors() {
-        let error = zip_error_to_io(ZipError::Io(Error::from(ErrorKind::NotFound)));
-
-        assert_eq!(error.kind(), ErrorKind::NotFound);
-    }
-
-    #[test]
-    fn maps_other_errors_to_other() {
-        let error = zip_error_to_io(ZipError::FileNotFound);
-
-        assert_eq!(error.kind(), ErrorKind::Other);
-    }
-}
-
 /// A file in a gitlab artifact
 ///
 /// Most importantly this implements [`Read`] to read out the content of the file
@@ -105,5 +84,26 @@ impl Artifact {
     /// The number of files in the artifacts
     pub fn len(&self) -> usize {
         self.zip.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zip_error_to_io;
+    use std::io::{Error, ErrorKind};
+    use zip::result::ZipError;
+
+    #[test]
+    fn preserves_io_errors() {
+        let error = zip_error_to_io(ZipError::Io(Error::from(ErrorKind::NotFound)));
+
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn maps_other_errors_to_other() {
+        let error = zip_error_to_io(ZipError::FileNotFound);
+
+        assert_eq!(error.kind(), ErrorKind::Other);
     }
 }
