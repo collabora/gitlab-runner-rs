@@ -11,7 +11,7 @@ use gitlab_runner::{
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::prelude::*;
 use url::Url;
 
@@ -109,12 +109,19 @@ impl Run {
                             for i in 0..artifact.len() {
                                 let (name, data) = {
                                     let mut f = artifact.by_index(i).expect("Failed to open file");
+                                    let name = match f.name() {
+                                        Ok(name) => name.into_owned(),
+                                        Err(e) => {
+                                            error!("Failed to get file name: {e}");
+                                            continue;
+                                        }
+                                    };
                                     let mut s = String::new();
                                     if f.read_to_string(&mut s).is_err() {
                                         s.clear();
                                         s.push_str("Failed to read file to text");
                                     }
-                                    (f.name().expect("Failed to get file name").into_owned(), s)
+                                    (name, s)
                                 };
                                 outputln!("=== File: {} ===", name);
                                 outputln!("{}", data);
