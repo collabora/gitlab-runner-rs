@@ -1,10 +1,18 @@
 //! Helpers for artifacts downloaded from gitlab
 use std::{
+    borrow::Cow,
     io::{Read, Seek},
     path::PathBuf,
 };
 
 use zip::{read::ZipFile, result::ZipResult};
+
+fn zip_error_to_io(error: zip::result::ZipError) -> std::io::Error {
+    match error {
+        zip::result::ZipError::Io(error) => error,
+        error => std::io::Error::other(error),
+    }
+}
 
 /// A file in a gitlab artifact
 ///
@@ -13,8 +21,8 @@ pub struct ArtifactFile<'a>(ZipFile<'a, Box<dyn ReadSeek + Send>>);
 
 impl ArtifactFile<'_> {
     /// Get the name of the file
-    pub fn name(&self) -> &str {
-        self.0.name()
+    pub fn name(&self) -> std::io::Result<Cow<'_, str>> {
+        self.0.name().map_err(zip_error_to_io)
     }
 
     /// Get the safe path of the file
@@ -52,8 +60,10 @@ impl Artifact {
     ///
     /// The returned file name isn't sanatized in any way and should *not* be used as a path on the
     /// filesystem. To get a safe path of a given file use [`ArtifactFile::path`]
-    pub fn file_names(&self) -> impl Iterator<Item = &str> {
-        self.zip.file_names()
+    pub fn file_names(&self) -> impl Iterator<Item = std::io::Result<Cow<'_, str>>> {
+        self.zip
+            .file_names()
+            .map(|name| name.map_err(zip_error_to_io))
     }
 
     /// Get a file in the artifact by name
@@ -74,5 +84,26 @@ impl Artifact {
     /// The number of files in the artifacts
     pub fn len(&self) -> usize {
         self.zip.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zip_error_to_io;
+    use std::io::{Error, ErrorKind};
+    use zip::result::ZipError;
+
+    #[test]
+    fn preserves_io_errors() {
+        let error = zip_error_to_io(ZipError::Io(Error::from(ErrorKind::NotFound)));
+
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn maps_other_errors_to_other() {
+        let error = zip_error_to_io(ZipError::FileNotFound);
+
+        assert_eq!(error.kind(), ErrorKind::Other);
     }
 }

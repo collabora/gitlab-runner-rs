@@ -109,12 +109,19 @@ impl Run {
                             for i in 0..artifact.len() {
                                 let (name, data) = {
                                     let mut f = artifact.by_index(i).expect("Failed to open file");
+                                    let name = match f.name() {
+                                        Ok(name) => name.into_owned(),
+                                        Err(e) => {
+                                            outputln!("Failed to get file name: {}\n", e);
+                                            continue;
+                                        }
+                                    };
                                     let mut s = String::new();
                                     if f.read_to_string(&mut s).is_err() {
                                         s.clear();
                                         s.push_str("Failed to read file to text");
                                     }
-                                    (f.name().to_string(), s)
+                                    (name, s)
                                 };
                                 outputln!("=== File: {} ===", name);
                                 outputln!("{}", data);

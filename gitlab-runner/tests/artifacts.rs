@@ -68,7 +68,10 @@ impl Download {
                 .await
                 .unwrap()
                 .expect("No artifacts to download");
-            let mut names: Vec<_> = artifact.file_names().collect();
+            let mut names: Vec<_> = artifact
+                .file_names()
+                .collect::<std::io::Result<Vec<_>>>()
+                .expect("Failed to get artifact file names");
             names.sort_unstable();
             assert_eq!(3, names.len());
             assert_eq!(&["dir/test", "test", "test2"], names.as_slice());
@@ -79,7 +82,7 @@ impl Download {
                 ("dir/test", "testdata-dir"),
             ] {
                 let mut f = artifact.file(name).expect("Testfile not available");
-                assert_eq!(f.name(), name);
+                assert_eq!(f.name().unwrap(), name);
                 let mut data = Vec::new();
                 f.read_to_end(&mut data).expect("Failed to read content");
                 assert_eq!(expected.as_bytes(), &*data);
@@ -87,7 +90,7 @@ impl Download {
 
             /* Try reading first data file a second time */
             let mut f = artifact.file("test").expect("Testfile not available");
-            assert_eq!(f.name(), "test");
+            assert_eq!(f.name().unwrap(), "test");
             let mut data = Vec::new();
             f.read_to_end(&mut data).expect("Failed to read content");
             assert_eq!("testdata".as_bytes(), &*data);
@@ -246,7 +249,7 @@ async fn multiple_upload() {
                     assert_eq!(z.len(), 3);
                     for ix in 0..z.len() {
                         let mut f = z.by_index(ix).expect("failed to get zip file");
-                        match f.name() {
+                        match f.name().unwrap().as_ref() {
                             "test" => {
                                 let mut data = Vec::new();
                                 f.read_to_end(&mut data).expect("failed to read zip file");
