@@ -245,9 +245,8 @@ async fn main() -> Result<()> {
     let mut term = signal(SignalKind::terminate()).expect("Failed to register signal handler");
     let mut int = signal(SignalKind::interrupt()).expect("Failed to register signal handler");
 
-    tokio::select! {
-        r = runner
-        .run(
+    runner
+        .run_until_shutdown(
             move |job| async move {
                 let amount = match job.variable("AMOUNT") {
                     Some(v) => v.value().parse().expect("Amount not a number"),
@@ -258,12 +257,14 @@ async fn main() -> Result<()> {
                 Ok(Run::new(job, amount))
             },
             8,
-        ) => match r {
-                Ok(_) => info!("Runner exited"),
-                Err(e) => panic!("Failed to pick up new jobs: {e}")
-        },
-        _ = term.recv() => info!("Got TERM: exiting!"),
-        _ = int.recv() => info!("Got INT: exiting!"),
-    }
+            async {
+                tokio::select! {
+                    _ = term.recv() => info!("Got TERM: draining jobs"),
+                    _ = int.recv() => info!("Got INT: draining jobs"),
+                }
+            },
+        )
+        .await
+        .context("Failed to run or drain jobs")?;
     Ok(())
 }
