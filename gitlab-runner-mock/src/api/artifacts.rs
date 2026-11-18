@@ -164,3 +164,47 @@ impl Respond for JobArtifactsDownloader {
         }
     }
 }
+
+pub(crate) struct RepositoryFileResponder {
+    mock: GitlabRunnerMock,
+}
+
+impl RepositoryFileResponder {
+    pub(crate) fn new(mock: GitlabRunnerMock) -> Self {
+        Self { mock }
+    }
+}
+
+impl Respond for RepositoryFileResponder {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        /* get api/v4/projects/<id>/repository/files/<path>/raw?ref=<ref> */
+        let segments: Vec<_> = request.url.path_segments().unwrap().collect();
+        let decode = |s: &str| {
+            percent_encoding::percent_decode_str(s)
+                .decode_utf8_lossy()
+                .into_owned()
+        };
+        let project = decode(segments[3]);
+        let file_path = decode(segments[6]);
+
+        let Some(token) = request
+            .headers
+            .get("JOB-TOKEN")
+            .map(|h| h.to_str().expect("Invalid JOB-TOKEN value"))
+        else {
+            return ResponseTemplate::new(StatusCode::FORBIDDEN);
+        };
+        if !self.mock.has_job_with_token(token) {
+            return ResponseTemplate::new(StatusCode::FORBIDDEN);
+        }
+
+        let Some((_, git_ref)) = request.url.query_pairs().find(|(k, _)| k == "ref") else {
+            return ResponseTemplate::new(StatusCode::BAD_REQUEST);
+        };
+
+        match self.mock.repository_file(&project, &file_path, &git_ref) {
+            Some(data) => ResponseTemplate::new(StatusCode::OK).set_body_bytes(data),
+            None => ResponseTemplate::new(StatusCode::NOT_FOUND),
+        }
+    }
+}

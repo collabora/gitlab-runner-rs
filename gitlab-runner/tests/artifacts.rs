@@ -300,3 +300,52 @@ async fn multiple_upload() {
     .with_subscriber(subscriber)
     .await;
 }
+
+struct RepositoryFile();
+
+impl RepositoryFile {
+    async fn new(job: Job) -> Self {
+        let data = job.repository_file("dir/file.txt").await.unwrap();
+        assert_eq!(b"hello", data.as_slice());
+        assert!(job.repository_file("missing").await.is_err());
+        Self()
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RepositoryFile {
+    async fn step(&mut self, _script: &[String], _phase: Phase) -> JobResult {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn repository_file() {
+    let mock = GitlabRunnerMock::start().await;
+    mock.add_repository_file(
+        "4",
+        "dir/file.txt",
+        "265c14cf140a66cfc61e40e4ab45c95ba8df5ed1",
+        b"hello".to_vec(),
+    );
+    let job = mock.add_dummy_job("repository file".to_string());
+
+    let dir = tempfile::tempdir().unwrap();
+    let (layer, jobs) = GitlabLayer::new();
+    let subscriber = Registry::default().with(layer);
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
+
+    async {
+        let got_job = runner
+            .request_job(|job| async move { Ok(RepositoryFile::new(job).await) })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, job.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}

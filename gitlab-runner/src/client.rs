@@ -261,6 +261,8 @@ pub enum Error {
     ZipFile(#[from] ZipError),
     #[error("Empty trace")]
     EmptyTrace,
+    #[error("Missing job variable {0}")]
+    MissingVariable(&'static str),
 }
 
 pub(crate) struct ArtifactInfo<'a> {
@@ -439,6 +441,39 @@ impl Client {
                 }
                 Ok(())
             }
+            _ => Err(Error::UnexpectedStatus(r.status())),
+        }
+    }
+
+    pub async fn download_repository_file(
+        &self,
+        project_id: &str,
+        path: &str,
+        git_ref: &str,
+        token: &str,
+    ) -> Result<Vec<u8>, Error> {
+        let mut url = self.url.clone();
+        url.path_segments_mut().unwrap().extend(&[
+            "api",
+            "v4",
+            "projects",
+            project_id,
+            "repository",
+            "files",
+            path,
+            "raw",
+        ]);
+        url.query_pairs_mut().append_pair("ref", git_ref);
+
+        let r = self
+            .client
+            .get(url)
+            .header("JOB-TOKEN", token)
+            .send()
+            .await?;
+
+        match r.status() {
+            StatusCode::OK => Ok(r.bytes().await?.to_vec()),
             _ => Err(Error::UnexpectedStatus(r.status())),
         }
     }
