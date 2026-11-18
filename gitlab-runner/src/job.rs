@@ -333,6 +333,22 @@ impl Job {
             })
     }
 
+    /// Fetch a file from the job's repository at the job's commit
+    ///
+    /// `path` is relative to the repository root. This relies on the `CI_PROJECT_ID` and
+    /// `CI_COMMIT_SHA` variables of the job.
+    pub async fn repository_file(&self, path: &str) -> Result<Vec<u8>, ClientError> {
+        let project = self
+            .variable("CI_PROJECT_ID")
+            .ok_or(ClientError::MissingVariable("CI_PROJECT_ID"))?;
+        let sha = self
+            .variable("CI_COMMIT_SHA")
+            .ok_or(ClientError::MissingVariable("CI_COMMIT_SHA"))?;
+        self.client
+            .download_repository_file(project.value(), path, sha.value(), &self.response.token)
+            .await
+    }
+
     /// Get a reference to the jobs build dir.
     pub fn build_dir(&self) -> &Path {
         &self.build_dir

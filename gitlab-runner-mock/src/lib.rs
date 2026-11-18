@@ -1,6 +1,7 @@
 // Required for serde_json::json macro on the massive job json
 #![recursion_limit = "256"]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use url::Url;
@@ -18,6 +19,7 @@ use api::JobArtifactsDownloader;
 use api::JobArtifactsUploader;
 use api::JobTraceResponder;
 use api::JobUpdateResponder;
+use api::RepositoryFileResponder;
 use api::{JobRequest, JobRequestResponder};
 
 #[derive(Default)]
@@ -47,6 +49,7 @@ struct Inner {
     update_interval: Mutex<u32>,
     expected_metadata: Mutex<ExpectedMetadata>,
     artifact_downloads_counter: Mutex<ArtifactDownloadsCounter>,
+    repository_files: Mutex<HashMap<(String, String, String), Vec<u8>>>,
 }
 
 #[derive(Clone)]
@@ -68,6 +71,7 @@ impl GitlabRunnerMock {
             update_interval: Mutex::new(3),
             expected_metadata: Mutex::new(ExpectedMetadata::default()),
             artifact_downloads_counter: Mutex::new(ArtifactDownloadsCounter::default()),
+            repository_files: Mutex::new(HashMap::new()),
         };
         let server = Self {
             inner: Arc::new(inner),
@@ -102,6 +106,14 @@ impl GitlabRunnerMock {
         Mock::given(method("GET"))
             .and(path_regex(r"^/api/v4/jobs/\d+/artifacts"))
             .respond_with(JobArtifactsDownloader::new(server.clone()))
+            .mount(&server.inner.server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path_regex(
+                r"^/api/v4/projects/[^/]+/repository/files/[^/]+/raw$",
+            ))
+            .respond_with(RepositoryFileResponder::new(server.clone()))
             .mount(&server.inner.server)
             .await;
 
@@ -172,6 +184,33 @@ impl GitlabRunnerMock {
             }
         }
         None
+    }
+
+    pub(crate) fn has_job_with_token(&self, token: &str) -> bool {
+        let jobs = self.inner.jobs.lock().unwrap();
+        jobs.jobs.iter().any(|j| j.token() == token)
+    }
+
+    /// Make a file available through the repository files API for the given project and ref
+    pub fn add_repository_file(&self, project_id: &str, path: &str, git_ref: &str, data: Vec<u8>) {
+        self.inner.repository_files.lock().unwrap().insert(
+            (project_id.to_owned(), path.to_owned(), git_ref.to_owned()),
+            data,
+        );
+    }
+
+    pub(crate) fn repository_file(
+        &self,
+        project_id: &str,
+        path: &str,
+        git_ref: &str,
+    ) -> Option<Vec<u8>> {
+        self.inner
+            .repository_files
+            .lock()
+            .unwrap()
+            .get(&(project_id.to_owned(), path.to_owned(), git_ref.to_owned()))
+            .cloned()
     }
 
     pub async fn n_requests(&self) -> usize {
