@@ -756,6 +756,7 @@ dependencies = [
  "futures",
  "http",
  "multer",
+ "percent-encoding",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
