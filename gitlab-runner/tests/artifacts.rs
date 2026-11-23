@@ -1,11 +1,12 @@
 use std::borrow::Cow;
-use std::io::Read;
+use std::io::{Cursor, Read, Write};
 
 use flate2::read::GzDecoder;
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
-use zip::ZipArchive;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use gitlab_runner::job::Job;
 use gitlab_runner::{GitlabLayer, JobHandler, JobResult, Phase, RunnerBuilder, UploadableFile};
@@ -165,6 +166,64 @@ async fn upload_download() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Success, download.state());
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
+#[tokio::test]
+async fn download_file_backed_artifact() {
+    let mock = GitlabRunnerMock::start().await;
+    let definition = vec![b'x'; 128 * 1024];
+    let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+    archive
+        .start_file(
+            "lava/testjob.yaml",
+            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        )
+        .unwrap();
+    archive.write_all(&definition).unwrap();
+    let producer = mock.add_completed_job(
+        "producer".to_string(),
+        archive.finish().unwrap().into_inner(),
+    );
+
+    let mut consumer = mock.job_builder("download artifact".to_string());
+    consumer.dependency(producer);
+    consumer.add_step(
+        MockJobStepName::Script,
+        vec!["dummy".to_string()],
+        3600,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    let consumer = consumer.build();
+    mock.enqueue_job(consumer.clone());
+
+    let dir = tempfile::tempdir().unwrap();
+    let (layer, jobs) = GitlabLayer::new();
+    let subscriber = Registry::default().with(layer);
+    let mut runner = RunnerBuilder::new(mock.uri(), mock.runner_token(), dir.path(), jobs)
+        .build()
+        .await;
+
+    async {
+        let got_job = runner
+            .request_job(|job| async move {
+                let dependency = job.dependencies().next().unwrap();
+                assert!(dependency.artifact_size().unwrap() > 64 * 1024);
+                let mut artifact = dependency.download().await.unwrap().unwrap();
+                let mut file = artifact.file("lava/testjob.yaml").unwrap();
+                let mut contents = Vec::new();
+                file.read_to_end(&mut contents).unwrap();
+                assert_eq!(contents, definition);
+                Ok(Download())
+            })
+            .await
+            .unwrap();
+        assert!(got_job);
+        runner.wait_for_space(1).await;
+        assert_eq!(MockJobState::Success, consumer.state());
     }
     .with_subscriber(subscriber)
     .await;
