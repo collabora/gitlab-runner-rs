@@ -460,6 +460,194 @@ async fn job_steps() {
     .await;
 }
 
+#[cfg(feature = "commands")]
+#[tokio::test]
+async fn command_handler_adapter_dispatches_and_forwards_lifecycle() {
+    use clap::{Parser, Subcommand};
+    use gitlab_runner::UploadableFile;
+    use gitlab_runner::commands::{CommandHandler, CommandHandlerAdapter, ParseCommandError};
+    use std::borrow::Cow;
+
+    #[derive(Parser)]
+    struct Command {
+        #[command(subcommand)]
+        action: Action,
+    }
+
+    #[derive(Subcommand)]
+    enum Action {
+        Echo { text: String },
+        Fail,
+    }
+
+    struct File;
+
+    #[async_trait::async_trait]
+    impl UploadableFile for File {
+        type Data<'a> = &'a [u8];
+
+        fn get_path(&self) -> Cow<'_, str> {
+            "result.txt".into()
+        }
+
+        async fn get_data(&self) -> Result<Self::Data<'_>, ()> {
+            Ok(b"result")
+        }
+    }
+
+    struct Handler {
+        job: Job,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandHandler<File> for Handler {
+        type Command = Command;
+
+        fn job(&self) -> &Job {
+            &self.job
+        }
+
+        fn on_entry(&mut self, entry: &str, phase: Phase) {
+            outputln!("> {}", entry);
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("entry:{phase:?}:{entry}"));
+        }
+
+        async fn command(&mut self, command: Command, phase: Phase) -> JobResult {
+            let (action, result) = match command.action {
+                Action::Echo { text } => (text, Ok(())),
+                Action::Fail => ("fail".into(), Err(())),
+            };
+            outputln!("{}", action);
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("command:{phase:?}:{action}"));
+            result
+        }
+
+        async fn parse_error(
+            &mut self,
+            _entry: &str,
+            phase: Phase,
+            error: ParseCommandError,
+        ) -> JobResult {
+            let help = matches!(error, ParseCommandError::DisplayHelp(_));
+            outputln!("{}", error);
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("parse-error:{phase:?}:{help}"));
+            if help { Ok(()) } else { Err(()) }
+        }
+
+        async fn get_uploadable_files(
+            &mut self,
+        ) -> Result<Box<dyn Iterator<Item = File> + Send>, ()> {
+            self.events.lock().unwrap().push("artifacts".into());
+            Ok(Box::new(std::iter::once(File)))
+        }
+
+        async fn cleanup(&mut self) {
+            self.events.lock().unwrap().push("cleanup".into());
+        }
+    }
+
+    let mock = GitlabRunnerMock::start().await;
+    let mut builder = mock.job_builder("typed commands".to_string());
+    builder.add_variable("NAME".into(), "Jane Doe".into(), true, false);
+    builder.add_step(
+        MockJobStepName::Script,
+        vec![
+            "echo $NAME".into(),
+            "--help".into(),
+            "".into(),
+            "echo later".into(),
+        ],
+        1234,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    builder.add_step(
+        MockJobStepName::AfterScript,
+        vec!["echo after".into(), "unknown".into(), "echo skipped".into()],
+        1234,
+        MockJobStepWhen::OnSuccess,
+        false,
+    );
+    builder.add_artifact_paths(vec!["result.txt".into()]);
+    let job = builder.build();
+    mock.enqueue_job(job.clone());
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    async {
+        runner
+            .request_job({
+                let events = events.clone();
+                |job| async move { Ok(CommandHandlerAdapter::new(Handler { job, events })) }
+            })
+            .await
+            .unwrap();
+        runner.wait_for_space(1).await;
+        assert_eq!(job.state(), MockJobState::Success);
+        assert_eq!(job.uploaded_artifacts().count(), 1);
+        let log = String::from_utf8(job.log()).unwrap();
+        assert!(log.contains("Jane Doe"), "{log}");
+        assert!(log.contains("> --help"), "{log}");
+        assert!(log.contains("Usage:"), "{log}");
+        assert!(log.contains("unrecognized subcommand"), "{log}");
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "entry:Script:echo $NAME",
+                "command:Script:Jane Doe",
+                "entry:Script:--help",
+                "parse-error:Script:true",
+                "entry:Script:",
+                "entry:Script:echo later",
+                "command:Script:later",
+                "entry:AfterScript:echo after",
+                "command:AfterScript:after",
+                "entry:AfterScript:unknown",
+                "parse-error:AfterScript:false",
+                "artifacts",
+                "cleanup",
+            ]
+        );
+
+        let mut builder = mock.job_builder("command failure".into());
+        builder.add_step(
+            MockJobStepName::Script,
+            vec!["fail".into(), "echo skipped".into()],
+            1234,
+            MockJobStepWhen::OnSuccess,
+            false,
+        );
+        let failed = builder.build();
+        mock.enqueue_job(failed.clone());
+        events.lock().unwrap().clear();
+        runner
+            .request_job({
+                let events = events.clone();
+                |job| async move { Ok(CommandHandlerAdapter::new(Handler { job, events })) }
+            })
+            .await
+            .unwrap();
+        runner.wait_for_space(1).await;
+        assert_eq!(failed.state(), MockJobState::Failed);
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["entry:Script:fail", "command:Script:fail", "cleanup"]
+        );
+    }
+    .with_subscriber(subscriber)
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn job_parallel() {
     let mock = GitlabRunnerMock::start().await;

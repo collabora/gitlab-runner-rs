@@ -2,6 +2,8 @@
 #![doc = include_str!("../README.md")]
 pub mod artifact;
 mod client;
+#[cfg(feature = "commands")]
+pub mod commands;
 mod logging;
 use crate::client::Client;
 mod run;
