@@ -6,7 +6,7 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_retry2::strategy::{FibonacciBackoff, jitter};
 use tracing::info;
 
@@ -66,6 +66,26 @@ pub struct Dependency<'a> {
     dependency: &'a JobDependency,
 }
 
+/// A download destination that can be emptied again before a retry
+trait ArtifactWriter: AsyncWrite + Unpin {
+    async fn reset(&mut self) -> std::io::Result<()>;
+}
+
+impl ArtifactWriter for Vec<u8> {
+    async fn reset(&mut self) -> std::io::Result<()> {
+        self.clear();
+        Ok(())
+    }
+}
+
+impl ArtifactWriter for tokio::fs::File {
+    async fn reset(&mut self) -> std::io::Result<()> {
+        self.set_len(0).await?;
+        self.rewind().await?;
+        Ok(())
+    }
+}
+
 fn is_retriable_error(err: &ClientError) -> bool {
     match err {
         ClientError::Request(_) => true,
@@ -102,16 +122,16 @@ impl Dependency<'_> {
         self.dependency.artifacts_file.as_ref().map(|a| a.size)
     }
 
-    async fn download_impl<A>(&self, mut writer: A) -> Result<(), ClientError>
+    async fn download_impl<A>(&self, writer: &mut A) -> Result<(), ClientError>
     where
-        A: AsyncWrite + Unpin,
+        A: ArtifactWriter,
     {
         let mut strategy = FibonacciBackoff::from_millis(900).map(jitter).take(4);
         loop {
             let r = self
                 .job
                 .client
-                .download_artifact(self.dependency.id, &self.dependency.token, &mut writer)
+                .download_artifact(self.dependency.id, &self.dependency.token, &mut *writer)
                 .await;
 
             match (r, strategy.next()) {
@@ -121,6 +141,8 @@ impl Dependency<'_> {
                         self.dependency.name
                     );
                     tokio::time::sleep(d).await;
+                    // A failed attempt may have written part of the body already.
+                    writer.reset().await.map_err(ClientError::WriteFailure)?;
                 }
                 (Ok(()), _) => {
                     // Wait for pending writes before the caller caches the artifact.
@@ -345,14 +367,35 @@ impl Job {
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, JobLog};
+    use super::{ArtifactWriter, Job, JobLog};
     use crate::client::{Client, ClientMetadata};
     use gitlab_runner_mock::{GitlabRunnerMock, MockJobStepName, MockJobStepWhen};
     use std::io::{Cursor, Read, Write};
     use std::sync::Arc;
     use tokio::fs::File;
-    use tokio::io::BufWriter;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufWriter};
+    use tokio::net::TcpListener;
     use zip::{ZipWriter, write::SimpleFileOptions};
+
+    impl ArtifactWriter for BufWriter<File> {
+        async fn reset(&mut self) -> std::io::Result<()> {
+            self.flush().await?;
+            self.get_mut().reset().await
+        }
+    }
+
+    /// Answer one request per entry with the given raw bytes, then close the connection.
+    async fn serve_replies(listener: TcpListener, responses: Vec<Vec<u8>>) {
+        for response in responses {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            stream.write_all(&response).await.unwrap();
+            stream.shutdown().await.unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn download_flushes_zip_before_reopening() {
@@ -408,5 +451,64 @@ mod tests {
             .read_to_end(&mut contents)
             .unwrap();
         assert_eq!(contents, definition);
+    }
+
+    #[tokio::test]
+    async fn retry_discards_partial_download() {
+        let body: Vec<u8> = (0..4096u32).map(|i| i as u8).collect();
+        let header = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+        // The first reply ends halfway through the body, the second one is complete.
+        let truncated = [header.as_bytes(), &body[..body.len() / 2]].concat();
+        let complete = [header.as_bytes(), &body[..]].concat();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(serve_replies(listener, vec![truncated, complete]));
+
+        let response = serde_json::from_value(serde_json::json!({
+            "id": 2,
+            "token": "job-token",
+            "allow_git_fetch": false,
+            "variables": [],
+            "steps": [],
+            "dependencies": [{
+                "id": 1,
+                "name": "producer",
+                "token": "dependency-token",
+                "artifacts_file": { "filename": "artifacts.zip", "size": body.len() },
+            }],
+            "artifacts": [],
+        }))
+        .unwrap();
+        let client = Client::new(
+            url.parse().unwrap(),
+            "runner-token".to_owned(),
+            "s_ystem_id1234".to_owned(),
+            ClientMetadata::default(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job::new(client, Arc::new(response), dir.path().into(), JobLog::new());
+        let dependency = job.dependencies().next().unwrap();
+
+        let mut downloaded = Vec::new();
+        dependency.download_impl(&mut downloaded).await.unwrap();
+
+        server.await.unwrap();
+        assert_eq!(downloaded, body);
+    }
+
+    #[tokio::test]
+    async fn file_reset_truncates_and_rewinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("artifact.zip");
+        let mut file = tokio::fs::File::create(&path).await.unwrap();
+
+        file.write_all(b"partial download").await.unwrap();
+        file.reset().await.unwrap();
+        assert_eq!(file.stream_position().await.unwrap(), 0);
+        file.write_all(b"complete").await.unwrap();
+        file.flush().await.unwrap();
+
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"complete");
     }
 }
