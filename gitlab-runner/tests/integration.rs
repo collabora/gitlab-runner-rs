@@ -8,6 +8,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 use tracing::Subscriber;
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::Registry;
@@ -563,6 +564,88 @@ async fn runner_run() {
     }
     .with_subscriber(subscriber)
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runner_run_until_shutdown_drains_jobs() {
+    let mock = GitlabRunnerMock::start().await;
+    let jobs = TestJobs::new(mock.clone());
+    jobs.add_job();
+    jobs.add_job();
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    let shutdown = CancellationToken::new();
+    let shutdown_for_runner = shutdown.clone();
+    let jobs_for_runner = jobs.clone();
+    let runner_task = tokio::spawn(
+        async move {
+            runner
+                .run_until_shutdown(
+                    {
+                        let jobs = jobs_for_runner.clone();
+                        move |job| future::ready(Ok(jobs.register(&job)))
+                    },
+                    1,
+                    &shutdown_for_runner,
+                )
+                .await
+        }
+        .with_subscriber(subscriber),
+    );
+
+    while jobs.running() == 0 {
+        tokio::task::yield_now().await;
+    }
+
+    shutdown.cancel();
+
+    jobs.jobs()[0].complete(()).await;
+    runner_task.await.unwrap().unwrap();
+    assert_eq!(MockJobState::Success, jobs.jobs()[0].job.state());
+    assert!(jobs.jobs()[1].is_pending());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runner_run_until_shutdown_keeps_in_flight_job() {
+    let mock = GitlabRunnerMock::start().await;
+    let jobs = TestJobs::new(mock.clone());
+    jobs.add_job();
+    jobs.add_job();
+
+    let (mut runner, subscriber, _dir) = setup_runner(&mock).await;
+    let shutdown = CancellationToken::new();
+    // Shutdown is triggered after the server assigned the job but before the
+    // runner receives the response, so the request is always in flight.
+    let shutdown_for_mock = shutdown.clone();
+    mock.set_on_job_assigned(move || shutdown_for_mock.cancel());
+    let shutdown_for_runner = shutdown.clone();
+    let jobs_for_runner = jobs.clone();
+    let runner_task = tokio::spawn(
+        async move {
+            runner
+                .run_until_shutdown(
+                    {
+                        let jobs = jobs_for_runner.clone();
+                        move |job| future::ready(Ok(jobs.register(&job)))
+                    },
+                    1,
+                    &shutdown_for_runner,
+                )
+                .await
+        }
+        .with_subscriber(subscriber),
+    );
+
+    while jobs.running() == 0 {
+        tokio::task::yield_now().await;
+    }
+    let job = jobs.jobs().into_iter().find(|j| j.is_running()).unwrap();
+    job.complete(()).await;
+
+    runner_task.await.unwrap().unwrap();
+    assert_eq!(MockJobState::Success, job.job.state());
+    assert_eq!(1, jobs.pending());
+    assert_eq!(1, mock.n_requests().await);
 }
 
 #[tokio::test(flavor = "multi_thread")]
