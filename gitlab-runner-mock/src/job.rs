@@ -150,8 +150,8 @@ impl MockJob {
             vec![MockUploadedJobArtifact {
                 filename: Some("default.zip".to_string()),
                 data: Arc::new(artifact),
-                artifact_format: None,
-                artifact_type: None,
+                artifact_format: Some("zip".to_string()),
+                artifact_type: Some("archive".to_string()),
             }]
         };
 

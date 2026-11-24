@@ -6,7 +6,7 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio_retry2::strategy::{FibonacciBackoff, jitter};
 use tracing::info;
 
@@ -121,6 +121,10 @@ impl Dependency<'_> {
                         self.dependency.name
                     );
                     tokio::time::sleep(d).await;
+                }
+                (Ok(()), _) => {
+                    // Wait for pending writes before the caller caches the artifact.
+                    return writer.flush().await.map_err(ClientError::WriteFailure);
                 }
                 (r, _) => return r,
             }
@@ -336,5 +340,73 @@ impl Job {
     /// Get a reference to the jobs build dir.
     pub fn build_dir(&self) -> &Path {
         &self.build_dir
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Job, JobLog};
+    use crate::client::{Client, ClientMetadata};
+    use gitlab_runner_mock::{GitlabRunnerMock, MockJobStepName, MockJobStepWhen};
+    use std::io::{Cursor, Read, Write};
+    use std::sync::Arc;
+    use tokio::fs::File;
+    use tokio::io::BufWriter;
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    #[tokio::test]
+    async fn download_flushes_zip_before_reopening() {
+        let mock = GitlabRunnerMock::start().await;
+        let definition = b"job_name: probe\nactions: []\n";
+        let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file("lava/testjob.yaml", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(definition).unwrap();
+        let archive = archive.finish().unwrap().into_inner();
+        let archive_len = archive.len();
+        let producer = mock.add_completed_job("producer".to_owned(), archive);
+        let mut consumer = mock.job_builder("consumer".to_owned());
+        consumer.dependency(producer);
+        consumer.add_step(
+            MockJobStepName::Script,
+            vec!["dummy".to_owned()],
+            3600,
+            MockJobStepWhen::OnSuccess,
+            false,
+        );
+        mock.enqueue_job(consumer.build());
+
+        let client = Client::new(
+            mock.uri(),
+            mock.runner_token().to_owned(),
+            "s_ystem_id1234".to_owned(),
+            ClientMetadata::default(),
+        );
+        let response = client.request_job().await.unwrap().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job::new(client, Arc::new(response), dir.path().into(), JobLog::new());
+        let dependency = job.dependencies().next().unwrap();
+
+        let path = dir.path().join("artifact.zip");
+        let file = File::create(&path).await.unwrap();
+        // Hold the entire ZIP, including its end record, until the download flushes.
+        let mut writer = BufWriter::with_capacity(archive_len + 1, file);
+        dependency.download_impl(&mut writer).await.unwrap();
+
+        job.artifacts.insert_file(dependency.id(), path);
+        let mut artifact = job
+            .artifacts
+            .get(dependency.id())
+            .await
+            .expect("The downloaded ZIP must be readable after reopening")
+            .unwrap();
+        let mut contents = Vec::new();
+        artifact
+            .file("lava/testjob.yaml")
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, definition);
     }
 }
