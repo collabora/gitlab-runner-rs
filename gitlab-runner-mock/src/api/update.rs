@@ -10,6 +10,7 @@ use crate::MockJobState;
 pub(crate) struct JobUpdate {
     token: String,
     state: MockJobState,
+    failure_reason: Option<String>,
 }
 
 pub(crate) struct JobUpdateResponder {
@@ -49,6 +50,7 @@ impl Respond for JobUpdateResponder {
                 );
 
                 job.update_state(r.state);
+                job.set_failure_reason(r.failure_reason);
                 ResponseTemplate::new(StatusCode::OK)
                     .append_header("Job-Status", job.state().to_string())
             }

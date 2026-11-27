@@ -9,12 +9,15 @@ use tracing::Instrument;
 use tracing::instrument::WithSubscriber;
 use tracing::warn;
 
-use crate::client::{ArtifactWhen, Client, JobArtifact, JobResponse, JobState};
+use crate::client::{ArtifactWhen, Client, FailureReason, JobArtifact, JobResponse, JobState};
 use crate::job::{Job, JobLog};
 use crate::runlist::{RunList, RunListEntry};
 use crate::uploader::Uploader;
 use crate::{CancellableJobHandler, UploadableFile};
 use crate::{JobResult, Phase};
+
+// The error is the reason sent to GitLab; `None` for handler failures
+type RunResult = Result<(), Option<FailureReason>>;
 
 async fn run<F, J, U, Ret>(
     job: Job,
@@ -23,7 +26,7 @@ async fn run<F, J, U, Ret>(
     process: F,
     build_dir: PathBuf,
     cancel_token: CancellationToken,
-) -> JobResult
+) -> RunResult
 where
     F: FnOnce(Job) -> Ret,
     J: CancellableJobHandler<U>,
@@ -32,12 +35,12 @@ where
 {
     if let Err(e) = tokio::fs::create_dir(&build_dir).await {
         job.trace(format!("Failed to create build dir: {e}"));
-        return Err(());
+        return Err(Some(FailureReason::RunnerSystemFailure));
     }
-    let mut handler = process(job).await?;
+    let mut handler = process(job).await.map_err(|()| None)?;
 
     let script_result = if !cancel_token.is_cancelled() {
-        let script = response.step(Phase::Script).ok_or(())?;
+        let script = response.step(Phase::Script).ok_or(None)?;
         let script_result = handler
             .step(&script.script, Phase::Script, &cancel_token)
             .await;
@@ -56,11 +59,11 @@ where
         Ok(())
     };
 
-    let mut overall_result = script_result;
+    let mut overall_result: RunResult = script_result.map_err(|()| None);
 
     if !cancel_token.is_cancelled() {
         for artifact in response.artifacts.iter() {
-            if process_artifact(
+            if let Err(reason) = process_artifact(
                 artifact,
                 script_result,
                 client.clone(),
@@ -69,9 +72,9 @@ where
                 &mut handler,
             )
             .await
-            .is_err()
             {
-                overall_result = Err(());
+                // A failed script stays the failure that is reported.
+                overall_result = overall_result.and(Err(reason));
                 break;
             }
         }
@@ -135,7 +138,7 @@ async fn process_artifact<J, U>(
     build_dir: &Path,
     response: &JobResponse,
     handler: &mut J,
-) -> JobResult
+) -> RunResult
 where
     J: CancellableJobHandler<U>,
     U: UploadableFile + Send + 'static,
@@ -160,13 +163,14 @@ where
         Ok(uploader) => uploader,
         Err(_) => {
             warn!("Failed to create uploader");
-            return Err(());
+            // The uploader is the crate's own code, not the job's
+            return Err(Some(FailureReason::RunnerSystemFailure));
         }
     };
 
     let mut uploaded = 0;
 
-    for file in handler.get_uploadable_files().await? {
+    for file in handler.get_uploadable_files().await.map_err(|()| None)? {
         let file_path = Path::new(&file.get_path().as_ref()).normalize();
 
         if artifact_path_matches(&file_path, &artifact.paths) {
@@ -175,20 +179,21 @@ where
                 .await
             {
                 Ok(mut upload) => {
-                    let mut data = file.get_data().await?;
+                    let mut data = file.get_data().await.map_err(|()| None)?;
                     match futures::io::copy(&mut data, &mut upload).await {
                         Ok(_) => {
                             uploaded += 1;
                         }
                         Err(e) => {
                             warn!("Failed to upload file: {:?}", e);
-                            return Err(());
+                            // Reading the handler's data may have failed
+                            return Err(None);
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Failed to begin new file upload: {:?}", e);
-                    return Err(());
+                    return Err(Some(FailureReason::RunnerSystemFailure));
                 }
             }
         }
@@ -198,7 +203,7 @@ where
         && let Err(e) = uploader.upload().await
     {
         warn!("Failed to upload artifact: {:?}", e);
-        return Err(());
+        return Err(Some(FailureReason::RunnerSystemFailure));
     }
 
     Ok(())
@@ -241,10 +246,20 @@ impl Run {
         interval
     }
 
-    async fn update(&self, state: JobState, cancel_token: &CancellationToken) {
+    async fn update(
+        &self,
+        state: JobState,
+        failure_reason: Option<FailureReason>,
+        cancel_token: &CancellationToken,
+    ) {
         match self
             .client
-            .update_job(self.response.id, &self.response.token, state)
+            .update_job(
+                self.response.id,
+                &self.response.token,
+                state,
+                failure_reason,
+            )
             .await
         {
             Ok(_reply) => (),
@@ -337,7 +352,7 @@ impl Run {
                         self.last_alive = now;
                     } else if now - self.last_alive > KEEPALIVE_INTERVAL {
                         // In case of errors another update will be sent at the next tick
-                        self.update(JobState::Running, &cancel_token).await;
+                        self.update(JobState::Running, None, &cancel_token).await;
                         self.last_alive = now;
                     }
                 },
@@ -352,12 +367,13 @@ impl Run {
 
         // Don't bother updating the status if cancelled, since it will just fail.
         if !cancel_token.is_cancelled() {
-            let state = match result {
-                Ok(Ok(_)) => JobState::Success,
-                Ok(Err(_)) => JobState::Failed,
-                Err(_) => JobState::Failed,
+            let (state, failure_reason) = match result {
+                Ok(Ok(_)) => (JobState::Success, None),
+                Ok(Err(reason)) => (JobState::Failed, reason),
+                // The handler task panicked
+                Err(_) => (JobState::Failed, Some(FailureReason::RunnerSystemFailure)),
             };
-            self.update(state, &cancel_token).await;
+            self.update(state, failure_reason, &cancel_token).await;
         }
     }
 }
