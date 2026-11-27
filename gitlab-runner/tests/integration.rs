@@ -347,6 +347,7 @@ async fn job_fail() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Failed, job.state());
+        assert_eq!(None, job.failure_reason());
     }
     .with_subscriber(subscriber)
     .await;
@@ -370,6 +371,10 @@ async fn job_panic() {
         assert!(got_job);
         runner.wait_for_space(1).await;
         assert_eq!(MockJobState::Failed, job.state());
+        assert_eq!(
+            Some("runner_system_failure".to_string()),
+            job.failure_reason()
+        );
     }
     .with_subscriber(subscriber)
     .await;

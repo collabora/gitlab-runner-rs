@@ -101,6 +101,16 @@ pub enum JobState {
 struct JobUpdate<'a> {
     token: &'a str,
     state: JobState,
+    // GitLab records `unknown_failure` when this is left out
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<FailureReason>,
+}
+
+/// An enum, as GitLab silently stores a reason it does not know as `unknown_failure`
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FailureReason {
+    RunnerSystemFailure,
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +352,7 @@ impl Client {
         id: u64,
         token: &str,
         state: JobState,
+        failure_reason: Option<FailureReason>,
     ) -> Result<JobUpdateReply, Error> {
         let mut url = self.url.clone();
         let id_s = format!("{id}");
@@ -349,7 +360,11 @@ impl Client {
             .unwrap()
             .extend(&["api", "v4", "jobs", &id_s]);
 
-        let update = JobUpdate { token, state };
+        let update = JobUpdate {
+            token,
+            state,
+            failure_reason,
+        };
 
         let r = self.client.put(url).json(&update).send().await?;
 
@@ -561,7 +576,7 @@ mod test {
 
         if let Some(job) = client.request_job().await.unwrap() {
             client
-                .update_job(job.id, &job.token, JobState::Success)
+                .update_job(job.id, &job.token, JobState::Success, None)
                 .await
                 .unwrap();
         } else {

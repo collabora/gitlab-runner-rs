@@ -61,6 +61,7 @@ pub struct MockUploadedJobArtifact {
 pub(crate) struct MockJobInner {
     state: MockJobState,
     state_updates: u32,
+    failure_reason: Option<String>,
     uploaded_artifacts: Vec<MockUploadedJobArtifact>,
     log: Vec<Vec<u8>>,
     log_patches: u32,
@@ -166,6 +167,7 @@ impl MockJob {
             inner: Arc::new(Mutex::new(MockJobInner {
                 state: MockJobState::Success,
                 state_updates: 2,
+                failure_reason: None,
                 uploaded_artifacts: artifacts,
                 log: Vec::new(),
                 log_patches: 0,
@@ -211,6 +213,12 @@ impl MockJob {
         inner.state_updates
     }
 
+    /// The `failure_reason` sent with the last job update
+    pub fn failure_reason(&self) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        inner.failure_reason.clone()
+    }
+
     pub fn finished(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         inner.state.finished()
@@ -247,6 +255,11 @@ impl MockJob {
         let mut inner = self.inner.lock().unwrap();
         inner.state_updates += 1;
         inner.state = state;
+    }
+
+    pub(crate) fn set_failure_reason(&self, failure_reason: Option<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.failure_reason = failure_reason;
     }
 
     pub(crate) fn append_log(
@@ -389,6 +402,7 @@ impl MockJobBuilder {
         let inner = MockJobInner {
             state: MockJobState::Pending,
             state_updates: 0,
+            failure_reason: None,
             log: Vec::new(),
             log_patches: 0,
             uploaded_artifacts: Vec::new(),
